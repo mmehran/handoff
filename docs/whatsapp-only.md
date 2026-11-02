@@ -17,11 +17,11 @@ git clone https://github.com/mmehran/handoff.git
 cd handoff
 ```
 
-1. **Configure** with the number that should *receive* the alerts:
+1. **Configure:**
    ```bash
-   npm run setup:whatsapp -- --to +15551234567
+   npm run setup:whatsapp
    ```
-   This creates `.env` and fills in `HANDOFF_WHATSAPP_ENABLED`, `HANDOFF_WHATSAPP_TO` and `HANDOFF_WHATSAPP_TOKEN`. You don't need `npm run setup`; there's no password in this mode.
+   It asks for the number that should *receive* the alerts, with its country code (e.g. `+15551234567`). You can also pass it directly: `npm run setup:whatsapp -- --to +15551234567`. This creates `.env` and fills in `HANDOFF_WHATSAPP_ENABLED`, `HANDOFF_WHATSAPP_TO` and `HANDOFF_WHATSAPP_TOKEN`. You don't need `npm run setup`; there's no password in this mode.
 
 2. **Start the sender:**
    ```bash

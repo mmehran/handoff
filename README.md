@@ -97,7 +97,7 @@ All settings live in `.env`; see [`.env.example`](.env.example) and the [configu
 |---|---|
 | `npm run setup` | `HANDOFF_PASSWORD_HASH`, `HANDOFF_TOTP_SECRET` |
 | `npm run setup:domain` | `HANDOFF_TUNNEL=cloudflare`, `HANDOFF_PUBLIC_HOSTNAME`, `HANDOFF_CLOUDFLARE_TUNNEL_TOKEN` |
-| `npm run setup:whatsapp -- --to +15551234567` | `HANDOFF_WHATSAPP_ENABLED`, `HANDOFF_WHATSAPP_TO`, `HANDOFF_WHATSAPP_TOKEN` |
+| `npm run setup:whatsapp` (asks for the receiving number, or pass `-- --to +15551234567`) | `HANDOFF_WHATSAPP_ENABLED`, `HANDOFF_WHATSAPP_TO`, `HANDOFF_WHATSAPP_TOKEN` |
 
 ## Commands
 

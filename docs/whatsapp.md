@@ -44,11 +44,13 @@ You need **two numbers**:
 
 ### 2. Configure
 
-Pass the number that should **receive** the messages, with its country code:
+Run:
 
 ```bash
-npm run setup:whatsapp -- --to +15551234567
+npm run setup:whatsapp
 ```
+
+It asks for the number that should **receive** the messages, with its country code (e.g. `+15551234567`), and asks again if the number looks wrong. Run it again later and press Enter to keep the current number. To skip the question, for example in a script, pass the number instead: `npm run setup:whatsapp -- --to +15551234567`.
 
 This writes three values to `.env`:
 
@@ -88,7 +90,7 @@ Restart `npm start`. The log shows `[notify] WhatsApp notifications on -> +15551
 | Update after pulling new code | `docker compose up -d --build` |
 | Unlink the sending phone | Remove the device on the phone (Linked devices), or wipe the keys: `docker compose down -v` |
 | Turn notifications off | `HANDOFF_WHATSAPP_ENABLED=false`, then restart Handoff |
-| Change the recipient | `npm run setup:whatsapp -- --to +<new number>`, then `docker compose up -d` (the container needs the new allow-list) and restart Handoff |
+| Change the recipient | `npm run setup:whatsapp` and type the new number, then `docker compose up -d` (the container needs the new allow-list) and restart Handoff |
 
 ## Security notes
 
@@ -102,7 +104,7 @@ Restart `npm start`. The log shows `[notify] WhatsApp notifications on -> +15551
 
 | Problem | Fix |
 |---|---|
-| `required variable HANDOFF_WHATSAPP_TOKEN is missing a value` | Run `npm run setup:whatsapp -- --to ...` first, and run compose from the Handoff folder. |
+| `required variable HANDOFF_WHATSAPP_TOKEN is missing a value` | Run `npm run setup:whatsapp` first, and run compose from the Handoff folder. |
 | "WhatsApp service not running" in the app | `docker compose ps`; start it with `docker compose up -d`. |
 | QR page keeps changing | That's normal. A new code appears every ~20 s until it's scanned. |
 | Nothing arrives | Check `docker logs handoff-whatsapp`. Is the sending phone online? Is `HANDOFF_WHATSAPP_TO` correct, with country code? |
