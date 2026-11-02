@@ -1,0 +1,27 @@
+{
+  "name": "handoff",
+  "version": "1.0.0",
+  "description": "Self-hosted remote control for Claude Code: browse every project and session, watch them live, reply and approve from your phone, get WhatsApp alerts.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "setup": "node src/setup.js",
+    "setup:domain": "node scripts/cloudflare-setup.js",
+    "setup:whatsapp": "node scripts/whatsapp-setup.js",
+    "start": "node src/index.js",
+    "start:local": "node src/index.js --local",
+    "whatsapp-only": "node src/whatsapp-only.js",
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "claude-code",
+    "remote-control",
+    "self-hosted",
+    "cloudflare-tunnel",
+    "whatsapp",
+    "notifications"
+  ],
+  "license": "MIT"
+}

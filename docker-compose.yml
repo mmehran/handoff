@@ -1,0 +1,23 @@
+# Optional: the self-hosted WhatsApp sender (open-source Baileys library, no paid API).
+# Reads HANDOFF_WHATSAPP_TOKEN / HANDOFF_WHATSAPP_TO from the .env next to this file
+# (run `npm run setup:whatsapp -- --to +<number>` first).
+#
+#   docker compose up -d --build      then open http://127.0.0.1:7870/qr to link the sending phone
+services:
+  whatsapp:
+    build: ./whatsapp
+    container_name: handoff-whatsapp
+    restart: unless-stopped          # comes back with Docker after a reboot
+    environment:
+      WA_TOKEN: ${HANDOFF_WHATSAPP_TOKEN:?run npm run setup:whatsapp first}
+      ALLOWED_TO: ${HANDOFF_WHATSAPP_TO:?run npm run setup:whatsapp first}
+    ports:
+      - "127.0.0.1:${HANDOFF_WHATSAPP_PORT:-7870}:3000"   # this machine only; never exposed to the network
+    volumes:
+      - wa-auth:/data                # linked-device keys survive restarts and rebuilds
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "2" }
+volumes:
+  wa-auth:

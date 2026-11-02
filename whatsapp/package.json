@@ -1,0 +1,14 @@
+{
+  "name": "handoff-whatsapp",
+  "version": "1.0.0",
+  "description": "Self-hosted WhatsApp sender for Handoff notifications (Claude Code events) (Baileys, no paid APIs).",
+  "private": true,
+  "type": "module",
+  "main": "server.js",
+  "dependencies": {
+    "@whiskeysockets/baileys": "6.7.18",
+    "pino": "9.6.0",
+    "qrcode": "1.5.4"
+  },
+  "license": "MIT"
+}
