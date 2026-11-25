@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { Notifier } from '../src/notify.js';
 
+// messages are built (reading the transcript) asynchronously; let them go out
+const settle = () => new Promise(r => setImmediate(r));
+
 function setup(overrides = {}) {
   const sent = [];
   let live = [];
@@ -21,15 +24,15 @@ function setup(overrides = {}) {
   return { n, sent, runner, answers, approvals, setLive: l => { live = l; } };
 }
 
-test('desktop session: busy -> waiting -> idle sends "waiting" then "finished"', () => {
+test('desktop session: busy -> waiting -> idle sends "waiting" then "finished"', async () => {
   const { n, sent, setLive } = setup();
   setLive([{ sessionId: 'a', status: 'busy', cwd: 'D:\\projects\\shop' }]);
-  n.scan(); // first scan only records state
+  await n.scan(); await settle(); // first scan only records state
   assert.equal(sent.length, 0);
   setLive([{ sessionId: 'a', status: 'waiting', waitingFor: 'permission to run Bash', cwd: 'D:\\projects\\shop' }]);
-  n.scan();
+  await n.scan(); await settle();
   setLive([{ sessionId: 'a', status: 'idle', cwd: 'D:\\projects\\shop' }]);
-  n.scan();
+  await n.scan(); await settle();
   assert.equal(sent.length, 2);
   assert.match(sent[0], /waiting for you/);
   assert.match(sent[0], /permission to run Bash/);
@@ -39,36 +42,38 @@ test('desktop session: busy -> waiting -> idle sends "waiting" then "finished"',
   assert.match(sent[1], /https:\/\/claude\.example\.com\/#\/s\/a/);
 });
 
-test('no message for sessions already idle at startup, or driven by the runner', () => {
+test('no message for sessions already idle at startup, or driven by the runner', async () => {
   const { n, sent, setLive } = setup();
   setLive([{ sessionId: 'a', status: 'idle' }, { sessionId: 'ours', status: 'busy' }]);
-  n.scan();
+  await n.scan(); await settle();
   setLive([{ sessionId: 'a', status: 'idle' }, { sessionId: 'ours', status: 'idle' }]);
-  n.scan();
+  await n.scan(); await settle();
   assert.equal(sent.length, 0);
 });
 
-test('runner events: approval request, finished turn and error', () => {
+test('runner events: approval request, finished turn and error', async () => {
   const { n, sent, runner } = setup();
   n.start(); n.stop();
   runner.emit('permission', { sessionId: 's1', tool: 'Bash', input: JSON.stringify({ command: 'npm test' }), cwd: 'D:\\x' });
   runner.emit('run', { sessionId: 's1', result: { isError: false, text: 'Done.' } });
   runner.emit('run', { sessionId: 's2', status: 'exited', lastError: 'claude exited with code 2' });
+  await settle();
   assert.equal(sent.length, 3);
   assert.match(sent[0], /needs your approval[\s\S]*Tool: Bash — npm test/);
   assert.match(sent[1], /Claude finished[\s\S]*Done\./);
   assert.match(sent[2], /hit an error[\s\S]*code 2/);
 });
 
-test('throttles repeats per session and respects disabled event kinds', () => {
+test('throttles repeats per session and respects disabled event kinds', async () => {
   const { n, sent } = setup({ events: { done: false } });
   assert.ok(n.event('approval', 'x'));
   assert.equal(n.event('approval', 'x'), false, 'same kind within 20s is skipped');
   assert.equal(n.event('done', 'x'), false, 'disabled kind');
+  await settle();
   assert.equal(sent.length, 1);
 });
 
-test('off when not configured', () => {
+test('off when not configured', async () => {
   const { n, sent } = setup({ enabled: false });
   assert.equal(n.event('approval', 'x'), false);
   assert.equal(sent.length, 0);
@@ -78,13 +83,13 @@ test('off when not configured', () => {
 const QUESTION = { toolUseId: 'tu1', questions: [{ header: 'Drink', question: 'Tea or coffee?', options: [
   { n: 1, label: 'Tea', description: 'green' }, { n: 2, label: 'Coffee', description: 'black' }] }] };
 
-test('a waiting session with a question sends the options, numbered, once', () => {
+test('a waiting session with a question sends the options, numbered, once', async () => {
   const { n, sent, setLive } = setup({ question: QUESTION });
   setLive([{ sessionId: 'a', status: 'busy', cwd: 'D:\p' }]);
-  n.scan();
+  await n.scan(); await settle();
   setLive([{ sessionId: 'a', status: 'waiting', cwd: 'D:\p' }]);
-  n.scan();
-  n.scan(); // still the same question: no repeat
+  await n.scan(); await settle();
+  await n.scan(); await settle(); // still the same question: no repeat
   assert.equal(sent.length, 1);
   assert.match(sent[0], /Claude is asking you/);
   assert.match(sent[0], /Tea or coffee\?/);
@@ -95,8 +100,8 @@ test('a waiting session with a question sends the options, numbered, once', () =
 
 test('a WhatsApp reply of "2" answers the open question', async () => {
   const { n, sent, answers, setLive } = setup({ question: QUESTION });
-  setLive([{ sessionId: 'a', status: 'busy' }]); n.scan();
-  setLive([{ sessionId: 'a', status: 'waiting' }]); n.scan();
+  setLive([{ sessionId: 'a', status: 'busy' }]); await n.scan(); await settle();
+  setLive([{ sessionId: 'a', status: 'waiting' }]); await n.scan(); await settle();
   await n.handleReply('2');
   assert.deepEqual(answers, [{ id: 'a', picks: [2], text: '' }]);
   assert.match(sent.at(-1), /Sent to Claude/);
@@ -105,8 +110,8 @@ test('a WhatsApp reply of "2" answers the open question', async () => {
 
 test('free text is forwarded as a typed answer, and replies with nothing open are refused', async () => {
   const { n, sent, answers, setLive } = setup({ question: QUESTION });
-  setLive([{ sessionId: 'a', status: 'busy' }]); n.scan();
-  setLive([{ sessionId: 'a', status: 'waiting' }]); n.scan();
+  setLive([{ sessionId: 'a', status: 'busy' }]); await n.scan(); await settle();
+  setLive([{ sessionId: 'a', status: 'waiting' }]); await n.scan(); await settle();
   await n.handleReply('neither, just water');
   assert.deepEqual(answers, [{ id: 'a', picks: [], text: 'neither, just water' }]);
   n.openAsk = null;
@@ -118,6 +123,7 @@ test('yes / no answer a pending tool approval', async () => {
   const { n, runner, approvals, sent } = setup();
   n.start();   // wires the runner listeners
   runner.emit('permission', { id: 'p1', sessionId: 'a', tool: 'Bash', input: '{"command":"ls"}', cwd: 'D:\p' });
+  await settle();
   assert.match(sent.at(-1), /Reply \*yes\* to allow/);
   await n.handleReply('yes');
   assert.deepEqual(approvals, [{ id: 'p1', allow: true }]);

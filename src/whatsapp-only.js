@@ -28,10 +28,10 @@ const runner = Object.assign(new EventEmitter(), { bySession: () => null });
 const notifier = new Notifier({ ...cfg, publicHostname: '' }, { // no web UI, so no "Open:" links
   store, runner,
   onAnswer: async (sessionId, pick) => {
-    const q = store.pendingQuestion(sessionId);
+    const q = await store.pendingQuestion(sessionId);
     if (!q) throw new Error('That question is no longer open.');
     const { chosen, prompt } = buildAnswer(q, pick);
-    const live = store.sessionInfo(sessionId)?.live;
+    const live = (await store.sessionInfo(sessionId))?.live;
     if (!live) throw new Error('That session is no longer running on the laptop.');
     await injectMessage(cfg.claudeHome, live, prompt);
     notifier.answered(sessionId, '');

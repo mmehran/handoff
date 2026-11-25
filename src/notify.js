@@ -91,10 +91,16 @@ export class Notifier {
     this.onLinkChange?.(this.linkState());
   }
 
-  // compare the session registry with the previous scan
-  scan() {
+  // compare the session registry with the previous scan (runs every 3s; never two at once)
+  async scan() {
+    if (this.scanning) return;
+    this.scanning = true;
+    try { await this.compare(); } finally { this.scanning = false; }
+  }
+
+  async compare() {
     let live;
-    try { live = this.store.liveSessions(); } catch { return; }
+    try { live = await this.store.liveSessions(); } catch { return; }
     const now = new Map(live.map(l => [l.sessionId, l]));
     if (this.seen) {
       for (const [id, l] of now) {
@@ -102,7 +108,7 @@ export class Notifier {
         const before = this.seen.get(id);
         if (l.status === 'waiting') {
           // Claude asked a multiple-choice question: send it with its options, once per question
-          const q = this.pending(id);
+          const q = await this.pending(id);
           if (q && this.askedQ.get(id) !== q.toolUseId) {
             this.askedQ.set(id, q.toolUseId);
             this.openAsk = { sessionId: id, toolUseId: q.toolUseId, at: Date.now() };
@@ -113,15 +119,15 @@ export class Notifier {
         } else if (l.status === 'idle' && (before === 'busy' || before === 'waiting')) {
           this.askedQ.delete(id);
           if (this.openAsk?.sessionId === id) this.openAsk = null;
-          this.event('done', id, { detail: this.lastReply(id), cwd: l.cwd, title: l.name });
+          this.event('done', id, { detail: await this.lastReply(id), cwd: l.cwd, title: l.name });
         }
       }
     }
     this.seen = new Map([...now].map(([id, l]) => [id, l.status]));
   }
 
-  pending(sessionId) {
-    try { return this.store.pendingQuestion(sessionId); } catch { return null; }
+  async pending(sessionId) {
+    try { return await this.store.pendingQuestion(sessionId); } catch { return null; }
   }
 
   // Called when the question was answered (from the web UI or from WhatsApp).
@@ -178,9 +184,9 @@ export class Notifier {
     return this.send(`✅ *Sent to Claude*${r?.answered?.length ? '\n' + r.answered.join('\n') : ''}${where}`);
   }
 
-  lastReply(sessionId) {
+  async lastReply(sessionId) {
     try {
-      const t = this.store.readTranscript(sessionId, null, 256 * 1024);
+      const t = await this.store.readTranscript(sessionId, null, 256 * 1024);
       const a = t?.events.filter(e => e.kind === 'assistant').pop();
       return a ? clip(a.text, 300) : '';
     } catch { return ''; }
@@ -193,17 +199,23 @@ export class Notifier {
     this.sent = this.sent.filter(x => t - x < 60e3);
     if (this.sent.length >= MAX_PER_MINUTE) return false;
     this.last.set(key, t); this.sent.push(t);
+    // the rate limits above are decided at once; the message is built (reading the transcript) and sent after
+    this.compose(kind, sessionId, { detail, cwd, title })
+      .then(text => this.send(text))
+      .then(() => this.log(`[notify] sent ${kind} for ${sessionId.slice(0, 8)}`))
+      .catch(e => this.log(`[notify] WhatsApp send failed (${kind}): ${e.message}`));
+    return true;
+  }
 
+  async compose(kind, sessionId, { detail = '', cwd = '', title = '' } = {}) {
     let info = null;
-    try { info = this.store.sessionInfo(sessionId); } catch { /* new session not on disk yet */ }
+    try { info = await this.store.sessionInfo(sessionId); } catch { /* new session not on disk yet */ }
     const name = title || info?.title || 'Claude session';
     const project = (cwd || info?.cwd || '').split(/[\\/]/).filter(Boolean).pop() || '';
     const head = { approval: '🔐 Claude needs your approval', waiting: '⏳ Claude is waiting for you', question: '❓ Claude is asking you', done: '✅ Claude finished', error: '⚠️ Claude hit an error' }[kind];
     const link = this.cfg.publicHostname ? `https://${this.cfg.publicHostname}/#/s/${sessionId}` : '';
     const text = [`*${head}*`, `Session: ${name}`, project && `Project: ${project}`, detail && '', detail, link && '', link && `Open: ${link}`]
       .filter(x => x !== false && x !== undefined && x !== null).join('\n').replace(/\n{3,}/g, '\n\n');
-    this.send(text).then(() => this.log(`[notify] sent ${kind} for ${sessionId.slice(0, 8)}`))
-      .catch(e => this.log(`[notify] WhatsApp send failed (${kind}): ${e.message}`));
     return text;
   }
 

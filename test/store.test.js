@@ -15,7 +15,7 @@ test('a half-written last line is not lost between initial load and live tail', 
   const full = line({ type: 'assistant', uuid: 'a2', message: { content: [{ type: 'text', text: 'second' }] } });
   fs.writeFileSync(file, line({ type: 'assistant', uuid: 'a1', message: { content: [{ type: 'text', text: 'first' }] } }) + full.slice(0, 20));
 
-  const t = new Store({ claudeHome: home }).readTranscript(id);
+  const t = await new Store({ claudeHome: home }).readTranscript(id);
   assert.deepEqual(t.events.map(e => e.text), ['first']);
 
   const got = [];
@@ -34,7 +34,7 @@ test('prompts delivered into a running session (peer messages) are shown as user
   assert.deepEqual(normalize({ type: 'user', isMeta: true, message: { content: 'internal' } }), []);
 });
 
-test('readSince returns only complete new lines and the next offset', () => {
+test('readSince returns only complete new lines and the next offset', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-since-'));
   const id = crypto.randomUUID();
   fs.mkdirSync(path.join(home, 'projects', 'p'), { recursive: true });
@@ -43,10 +43,10 @@ test('readSince returns only complete new lines and the next offset', () => {
   const l2 = JSON.stringify({ type: 'assistant', uuid: 'a2', message: { content: [{ type: 'text', text: 'two' }] } }) + '\n';
   fs.writeFileSync(file, l1 + l2.slice(0, 10));
   const s = new Store({ claudeHome: home });
-  const r1 = s.readSince(id, 0);
+  const r1 = await s.readSince(id, 0);
   assert.deepEqual(r1.events.map(e => e.text), ['one']);
   assert.equal(r1.end, Buffer.byteLength(l1));
   fs.appendFileSync(file, l2.slice(10));
-  const r2 = s.readSince(id, r1.end);
+  const r2 = await s.readSince(id, r1.end);
   assert.deepEqual(r2.events.map(e => e.text), ['two']);
 });

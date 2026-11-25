@@ -2,7 +2,10 @@
 //   projects/<encoded-cwd>/<sessionId>.jsonl   transcripts
 //   projects/<encoded-cwd>/<sessionId>/custom-title.json
 //   sessions/<pid>.json                        registry of running sessions (desktop + CLI)
-import fs from 'node:fs';
+// All file access is asynchronous, so a slow or busy disk delays only the request that needs it,
+// never the whole server (the event streams, the tunnel watchdog, other requests).
+import fsp from 'node:fs/promises';
+import { watch as fsWatch } from 'node:fs';
 import path from 'node:path';
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -11,14 +14,15 @@ const KEY_RE = /^[A-Za-z0-9._-]{1,255}$/;
 const TEXT_MAX = 20000, TOOL_RESULT_MAX = 4000, TOOL_INPUT_MAX = 3000;
 const clip = (s, n) => (s.length > n ? s.slice(0, n) + `\n… [${s.length - n} more chars]` : s);
 
-function readSlice(file, start, len) {
-  const fd = fs.openSync(file, 'r');
+async function readSlice(file, start, len) {
+  const fh = await fsp.open(file, 'r');
   try {
     const buf = Buffer.alloc(len);
-    const n = fs.readSync(fd, buf, 0, len, start);
-    return buf.subarray(0, n);
-  } finally { fs.closeSync(fd); }
+    const { bytesRead } = await fh.read(buf, 0, len, start);
+    return buf.subarray(0, bytesRead);
+  } finally { await fh.close(); }
 }
+const exists = p => fsp.access(p).then(() => true, () => false);
 
 function stripReminders(s) {
   return s.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim();
@@ -106,17 +110,22 @@ export class Store {
     this.metaCache = new Map(); // file -> {mtimeMs, size, title, cwd}
     this.fileCache = new Map(); // sessionId -> file
     this.questionCache = new Map(); // sessionId -> {size, value}
+    this.liveRead = null;           // callers asking while the registry is being read share that read
   }
 
   // ----- live registry -----
   liveSessions() {
+    return (this.liveRead ||= this.readRegistry().finally(() => { this.liveRead = null; }));
+  }
+
+  async readRegistry() {
     const out = [];
     let names = [];
-    try { names = fs.readdirSync(this.registryDir); } catch { return out; }
+    try { names = await fsp.readdir(this.registryDir); } catch { return out; }
     for (const n of names) {
       if (!/^\d+\.json$/.test(n)) continue; // never touch the *.key files
       try {
-        const r = JSON.parse(fs.readFileSync(path.join(this.registryDir, n), 'utf8'));
+        const r = JSON.parse(await fsp.readFile(path.join(this.registryDir, n), 'utf8'));
         if (!r.sessionId || !isAlive(r.pid)) continue;
         out.push({
           pid: r.pid, sessionId: r.sessionId, cwd: r.cwd, name: r.name || '', status: r.status || 'unknown',
@@ -129,86 +138,85 @@ export class Store {
   }
 
   // ----- projects -----
-  listProjects() {
+  async listProjects() {
     let dirs = [];
-    try { dirs = fs.readdirSync(this.projectsDir, { withFileTypes: true }).filter(d => d.isDirectory()); } catch { return []; }
-    const live = this.liveSessions();
-    const out = [];
-    for (const d of dirs) {
+    try { dirs = (await fsp.readdir(this.projectsDir, { withFileTypes: true })).filter(d => d.isDirectory()); } catch { return []; }
+    const live = await this.liveSessions();
+    // every project folder and transcript is checked in parallel: hundreds of one-at-a-time waits add up
+    const projects = await Promise.all(dirs.map(async d => {
       const dir = path.join(this.projectsDir, d.name);
       let files;
-      try { files = fs.readdirSync(dir).filter(f => f.endsWith('.jsonl') && UUID_RE.test(f.slice(0, -6))); } catch { continue; }
-      if (!files.length) continue;
-      let last = 0, lastFile = null;
-      for (const f of files) {
-        const st = fs.statSync(path.join(dir, f));
-        if (st.mtimeMs > last) { last = st.mtimeMs; lastFile = f; }
-      }
-      const cwd = this.cwdOf(path.join(dir, lastFile)) || d.name;
+      try { files = (await fsp.readdir(dir)).filter(f => f.endsWith('.jsonl') && UUID_RE.test(f.slice(0, -6))); } catch { return null; }
+      const stats = await Promise.all(files.map(f => fsp.stat(path.join(dir, f)).then(st => ({ f, mtime: st.mtimeMs }), () => null)));
+      const newest = stats.filter(Boolean).sort((x, y) => y.mtime - x.mtime)[0];
+      if (!newest) return null;
+      const cwd = (await this.cwdOf(path.join(dir, newest.f))) || d.name;
       const ids = new Set(files.map(f => f.slice(0, -6)));
-      out.push({
-        key: d.name, cwd, name: projectName(cwd), sessions: files.length, lastActivity: last,
+      return {
+        key: d.name, cwd, name: projectName(cwd), sessions: files.length, lastActivity: newest.mtime,
         scratch: /scratch-workspaces/i.test(cwd), live: live.filter(l => ids.has(l.sessionId)).length
-      });
-    }
-    return out.sort((a, b) => b.lastActivity - a.lastActivity);
+      };
+    }));
+    return projects.filter(Boolean).sort((a, b) => b.lastActivity - a.lastActivity);
   }
 
-  projectDir(key) {
+  async projectDir(key) {
     if (!KEY_RE.test(key) || key === '.' || key === '..') return null;
     const dir = path.join(this.projectsDir, key);
-    return fs.existsSync(dir) ? dir : null;
+    return (await exists(dir)) ? dir : null;
   }
 
-  listSessions(key) {
-    const dir = this.projectDir(key);
+  async listSessions(key) {
+    const dir = await this.projectDir(key);
     if (!dir) return null;
-    const live = new Map(this.liveSessions().map(l => [l.sessionId, l]));
+    const live = new Map((await this.liveSessions()).map(l => [l.sessionId, l]));
     const out = [];
-    for (const f of fs.readdirSync(dir)) {
+    for (const f of await fsp.readdir(dir)) {
       const id = f.slice(0, -6);
       if (!f.endsWith('.jsonl') || !UUID_RE.test(id)) continue;
       const file = path.join(dir, f);
-      const meta = this.meta(file);
+      let meta;
+      try { meta = await this.meta(file); } catch { continue; } // deleted meanwhile
       const l = live.get(id);
       out.push({ id, title: (l && l.name) || meta.title, mtime: meta.mtimeMs, size: meta.size, live: l ? l.status : null, entrypoint: l?.entrypoint });
     }
     return out.sort((a, b) => b.mtime - a.mtime);
   }
 
-  sessionFile(id) {
+  async sessionFile(id) {
     if (!UUID_RE.test(id)) return null;
     const cached = this.fileCache.get(id);
-    if (cached && fs.existsSync(cached)) return cached;
+    if (cached && await exists(cached)) return cached;
     let dirs = [];
-    try { dirs = fs.readdirSync(this.projectsDir); } catch { return null; }
+    try { dirs = await fsp.readdir(this.projectsDir); } catch { return null; }
     for (const d of dirs) {
       const f = path.join(this.projectsDir, d, id + '.jsonl');
-      if (fs.existsSync(f)) { this.fileCache.set(id, f); return f; }
+      if (await exists(f)) { this.fileCache.set(id, f); return f; }
     }
     return null;
   }
 
-  sessionInfo(id) {
-    const file = this.sessionFile(id);
+  async sessionInfo(id) {
+    const file = await this.sessionFile(id);
     if (!file) return null;
-    const meta = this.meta(file);
-    const l = this.liveSessions().find(x => x.sessionId === id);
+    let meta;
+    try { meta = await this.meta(file); } catch { return null; }
+    const l = (await this.liveSessions()).find(x => x.sessionId === id);
     const key = path.basename(path.dirname(file));
     return { id, projectKey: key, cwd: meta.cwd, title: (l && l.name) || meta.title, size: meta.size, mtime: meta.mtimeMs, live: l || null };
   }
 
   // The question a session is blocked on, if any: the last AskUserQuestion tool_use in the
   // transcript tail that has no tool_result yet. Cached per (file size) so polling stays cheap.
-  pendingQuestion(id) {
-    const file = this.sessionFile(id);
+  async pendingQuestion(id) {
+    const file = await this.sessionFile(id);
     if (!file) return null;
     let size;
-    try { size = fs.statSync(file).size; } catch { return null; }
+    try { size = (await fsp.stat(file)).size; } catch { return null; }
     const c = this.questionCache.get(id);
     if (c && c.size === size) return c.value;
     const start = Math.max(0, size - 512 * 1024);
-    let text = readSlice(file, start, size - start).toString('utf8');
+    let text = (await readSlice(file, start, size - start)).toString('utf8');
     if (start > 0) text = text.slice(text.indexOf('\n') + 1);
     let asked = null;
     const answered = new Set();
@@ -228,25 +236,25 @@ export class Store {
     return value;
   }
 
-  meta(file) {
-    const st = fs.statSync(file);
+  async meta(file) {
+    const st = await fsp.stat(file);
     const c = this.metaCache.get(file);
     if (c && c.mtimeMs === st.mtimeMs && c.size === st.size) return c;
     const m = { mtimeMs: st.mtimeMs, size: st.size, title: '', cwd: c?.cwd || '' };
     // 1) title file written by the desktop app / CLI rename
     try {
-      const t = JSON.parse(fs.readFileSync(path.join(file.slice(0, -6), 'custom-title.json'), 'utf8'));
+      const t = JSON.parse(await fsp.readFile(path.join(file.slice(0, -6), 'custom-title.json'), 'utf8'));
       m.title = t.customTitle || '';
     } catch { /* none */ }
     // 2) latest custom-title / ai-title in the tail
     if (!m.title) {
-      const tail = readSlice(file, Math.max(0, st.size - 256 * 1024), Math.min(st.size, 256 * 1024)).toString('utf8');
+      const tail = (await readSlice(file, Math.max(0, st.size - 256 * 1024), Math.min(st.size, 256 * 1024))).toString('utf8');
       const all = [...tail.matchAll(/"(?:customTitle|aiTitle)":"((?:[^"\\]|\\.){1,300})"/g)];
       if (all.length) m.title = safeJsonString(all[all.length - 1][1]);
     }
     // 3) first user prompt
     if (!m.title || !m.cwd) {
-      const head = readSlice(file, 0, Math.min(st.size, 128 * 1024)).toString('utf8');
+      const head = (await readSlice(file, 0, Math.min(st.size, 128 * 1024))).toString('utf8');
       if (!m.cwd) { const cm = head.match(/"cwd":"((?:[^"\\]|\\.)*)"/); if (cm) m.cwd = safeJsonString(cm[1]); }
       if (!m.title) {
         for (const line of head.split('\n')) {
@@ -264,22 +272,22 @@ export class Store {
     return m;
   }
 
-  cwdOf(file) {
-    try { return this.meta(file).cwd; } catch { return ''; }
+  async cwdOf(file) {
+    try { return (await this.meta(file)).cwd; } catch { return ''; }
   }
 
   // Read display events from the end of a transcript, paging backwards via `before` (byte offset).
-  readTranscript(id, before, maxBytes = 1024 * 1024) {
-    const file = this.sessionFile(id);
+  async readTranscript(id, before, maxBytes = 1024 * 1024) {
+    const file = await this.sessionFile(id);
     if (!file) return null;
-    const size = fs.statSync(file).size;
+    const size = (await fsp.stat(file)).size;
     const end = before == null ? size : Math.min(Math.max(0, before), size);
     let start = Math.max(0, end - maxBytes);
-    let chunk = readSlice(file, start, end - start);
+    let chunk = await readSlice(file, start, end - start);
     // grow the window if a single huge line swallowed it (up to 16MB)
     while (start > 0 && chunk.indexOf(10) === -1 && end - start < 16 * 1024 * 1024) {
       start = Math.max(0, end - (end - start) * 2);
-      chunk = readSlice(file, start, end - start);
+      chunk = await readSlice(file, start, end - start);
     }
     let text = chunk.toString('utf8');
     if (start > 0) {
@@ -303,12 +311,12 @@ export class Store {
   }
 
   // Events appended after byte offset `from` (complete lines only), for clients that can't stream.
-  readSince(id, from, maxBytes = 2 * 1024 * 1024) {
-    const file = this.sessionFile(id);
+  async readSince(id, from, maxBytes = 2 * 1024 * 1024) {
+    const file = await this.sessionFile(id);
     if (!file) return { events: [], end: 0 };
-    const size = fs.statSync(file).size;
+    const size = (await fsp.stat(file)).size;
     if (!(from >= 0) || from > size) from = size;
-    const buf = readSlice(file, from, Math.min(size - from, maxBytes));
+    const buf = await readSlice(file, from, Math.min(size - from, maxBytes));
     const lastNl = buf.lastIndexOf(10);
     if (lastNl < 0) return { events: [], end: from };
     const events = [];
@@ -322,26 +330,30 @@ export class Store {
 
 // Follow a growing JSONL file from a byte offset; calls onRecord for each complete line.
 export function tailFile(file, from, onRecord) {
-  let pos = from, partial = '', closed = false, reading = false;
-  const read = () => {
-    if (closed || reading) return;
+  let pos = from, partial = '', closed = false, reading = false, again = false;
+  const read = async () => {
+    if (closed) return;
+    if (reading) { again = true; return; } // a change arrived mid-read: read once more after this one
     reading = true;
-    try {
-      const size = fs.statSync(file).size;
-      if (size < pos) pos = size; // truncated/rewritten
-      if (size > pos) {
-        const buf = readSlice(file, pos, size - pos);
-        pos = size;
-        const lines = (partial + buf.toString('utf8')).split('\n');
-        partial = lines.pop();
-        for (const l of lines) { if (l.trim()) { try { onRecord(JSON.parse(l), pos); } catch { /* skip */ } } }
-      }
-    } catch { /* file gone */ }
+    do {
+      again = false;
+      try {
+        const size = (await fsp.stat(file)).size;
+        if (size < pos) pos = size; // truncated/rewritten
+        if (size > pos && !closed) {
+          const buf = await readSlice(file, pos, size - pos);
+          pos += buf.length;
+          const lines = (partial + buf.toString('utf8')).split('\n');
+          partial = lines.pop();
+          for (const l of lines) { if (l.trim() && !closed) { try { onRecord(JSON.parse(l), pos); } catch { /* skip */ } } }
+        }
+      } catch { /* file gone */ }
+    } while (again && !closed);
     reading = false;
   };
   let watcher = null;
-  try { watcher = fs.watch(file, { persistent: false }, read); } catch { /* fall back to polling */ }
-  const timer = setInterval(read, watcher ? 3000 : 1000); // safety net; fs.watch can miss events on Windows
+  try { watcher = fsWatch(file, { persistent: false }, () => { read(); }); } catch { /* fall back to polling */ }
+  const timer = setInterval(() => { read(); }, watcher ? 3000 : 1000); // safety net; fs.watch can miss events on Windows
   timer.unref?.();
   read();
   return () => { closed = true; clearInterval(timer); watcher?.close(); };

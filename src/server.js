@@ -1,5 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { ROOT, DATA_DIR, ENV_FILE } from './config.js';
@@ -117,26 +118,27 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
   route('GET', /^\/api\/me$/, (req, res) => json(res, 200, { ok: true, ...pageSettings(), logins: sessions.list().length, version: pageVersion(), whatsapp: notifier.linkState() }));
 
   // ---------- browsing (read-only) ----------
-  route('GET', /^\/api\/projects$/, (req, res) => json(res, 200, store.listProjects()));
+  route('GET', /^\/api\/projects$/, async (req, res) => json(res, 200, await store.listProjects()));
 
-  route('GET', /^\/api\/projects\/([^/]+)\/sessions$/, (req, res, ctx, m) => {
-    const list = store.listSessions(decodeURIComponent(m[1]));
+  route('GET', /^\/api\/projects\/([^/]+)\/sessions$/, async (req, res, ctx, m) => {
+    const list = await store.listSessions(decodeURIComponent(m[1]));
     if (!list) return json(res, 404, { error: 'project not found' });
     for (const s of list) { const r = runner.bySession(s.id); s.run = r ? r.status : null; }
     json(res, 200, list);
   });
 
-  route('GET', /^\/api\/live$/, (req, res) => {
-    const live = store.liveSessions().map(l => ({ ...l, title: l.name || store.sessionInfo(l.sessionId)?.title || '' }));
-    const runs = runner.list().map(r => ({ ...r, title: (r.sessionId && store.sessionInfo(r.sessionId)?.title) || '' }));
+  route('GET', /^\/api\/live$/, async (req, res) => {
+    const titleOf = async id => (id && (await store.sessionInfo(id))?.title) || '';
+    const live = await Promise.all((await store.liveSessions()).map(async l => ({ ...l, title: l.name || await titleOf(l.sessionId) })));
+    const runs = await Promise.all(runner.list().map(async r => ({ ...r, title: await titleOf(r.sessionId) })));
     const ours = new Set(runs.map(r => r.sessionId));
     const others = live.filter(l => !ours.has(l.sessionId));
-    for (const l of others) if (l.status === 'waiting') l.question = store.pendingQuestion(l.sessionId) || null;
+    for (const l of others) if (l.status === 'waiting') l.question = (await store.pendingQuestion(l.sessionId)) || null;
     json(res, 200, { live: others, runs, permissions: runner.pendingPermissions(), version: pageVersion(), whatsapp: notifier.linkState() });
   });
 
-  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})$/, (req, res, ctx, m) => {
-    const info = store.sessionInfo(m[1]);
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})$/, async (req, res, ctx, m) => {
+    const info = await store.sessionInfo(m[1]);
     const run = runner.bySession(m[1]);
     if (!info && !run) return json(res, 404, { error: 'session not found' });
     // a session our runner drives also shows up in the registry; only report *other* live processes
@@ -144,13 +146,13 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
     json(res, 200, {
       ...(info || { id: m[1], cwd: run.cwd, title: 'New session' }),
       run: run ? runner.publicRun(run) : null,
-      question: store.pendingQuestion(m[1]) || null
+      question: (await store.pendingQuestion(m[1])) || null
     });
   });
 
-  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/transcript$/, (req, res, ctx, m) => {
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/transcript$/, async (req, res, ctx, m) => {
     const before = ctx.url.searchParams.get('before');
-    const t = store.readTranscript(m[1], before == null ? null : Number(before));
+    const t = await store.readTranscript(m[1], before == null ? null : Number(before));
     if (!t) return json(res, 200, { events: [], start: 0, end: 0, size: 0 });
     json(res, 200, t);
   });
@@ -171,18 +173,25 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
     };
     const onRunnerMsg = (sid, msg) => { if (sid === id) push(msg); };
     runner.on('message', onRunnerMsg);
-    const attach = () => {
-      const file = store.sessionFile(id);
-      if (!file) return false;
-      if (!Number.isFinite(from)) from = fs.statSync(file).size;
-      stop = tailFile(file, from, o => push(o));
-      return true;
+    // a brand-new session has no transcript yet: look for it every second until it appears
+    let waiter = null, closed = false, attaching = false;
+    const attach = async () => {
+      if (attaching || stop || closed) return;
+      attaching = true;
+      try {
+        const file = await store.sessionFile(id);
+        if (!file || closed) return;
+        if (!Number.isFinite(from)) from = (await fsp.stat(file)).size;
+        if (closed) return;
+        stop = tailFile(file, from, o => push(o));
+        clearInterval(waiter); waiter = null;
+      } catch { /* not there yet */ } finally { attaching = false; }
     };
-    let waiter = null;
-    if (!attach()) waiter = setInterval(() => { if (attach()) { clearInterval(waiter); waiter = null; } }, 1000);
+    waiter = setInterval(attach, 1000);
+    attach();
     res.write('event: ready\ndata: {}\n\n'); // lets the client tell a working stream from a buffering proxy
     const hb = setInterval(() => res.write('event: ping\ndata: 1\n\n'), 15e3); // an event (not a comment) so the page can see it
-    req.on('close', () => { stop?.(); clearInterval(hb); if (waiter) clearInterval(waiter); runner.off('message', onRunnerMsg); });
+    req.on('close', () => { closed = true; stop?.(); clearInterval(hb); clearInterval(waiter); runner.off('message', onRunnerMsg); });
   });
 
   // ---------- files in the session's folder (optional, read-only) ----------
@@ -191,22 +200,22 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
     deny: [ENV_FILE, DATA_DIR, path.join(cfg.claudeHome, '.credentials.json'), path.join(cfg.claudeHome, 'sessions')],
     allowedRoots: cfg.allowedRoots
   });
-  const sessionFolder = id => {
+  const sessionFolder = async id => {
     if (!cfg.fileBrowser) throw httpErr(404, 'the file browser is turned off (HANDOFF_FILE_BROWSER)');
-    const cwd = store.sessionInfo(id)?.cwd || runner.bySession(id)?.cwd;
+    const cwd = (await store.sessionInfo(id))?.cwd || runner.bySession(id)?.cwd;
     if (!cwd) throw httpErr(404, 'session not found');
     return cwd;
   };
-  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/files$/, (req, res, ctx, m) => {
-    json(res, 200, files.list(sessionFolder(m[1]), ctx.url.searchParams.get('path')));
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/files$/, async (req, res, ctx, m) => {
+    json(res, 200, files.list(await sessionFolder(m[1]), ctx.url.searchParams.get('path')));
   });
-  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/file$/, (req, res, ctx, m) => {
-    const f = files.read(sessionFolder(m[1]), ctx.url.searchParams.get('path'));
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/file$/, async (req, res, ctx, m) => {
+    const f = files.read(await sessionFolder(m[1]), ctx.url.searchParams.get('path'));
     audit(ctx.ip, 'file_view', { sessionId: m[1], path: f.path });
     json(res, 200, f);
   });
-  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/raw$/, (req, res, ctx, m) => {
-    const f = files.image(sessionFolder(m[1]), ctx.url.searchParams.get('path'));
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/raw$/, async (req, res, ctx, m) => {
+    const f = files.image(await sessionFolder(m[1]), ctx.url.searchParams.get('path'));
     res.writeHead(200, {
       'Content-Type': f.type, 'Content-Length': f.size, 'Cache-Control': 'private, no-store',
       // an SVG opened on its own must not be able to run scripts on this site
@@ -217,8 +226,8 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
   });
 
   // polling fallback for networks/proxies that buffer event streams
-  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/since$/, (req, res, ctx, m) => {
-    json(res, 200, store.readSince(m[1], Number(ctx.url.searchParams.get('from'))));
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/since$/, async (req, res, ctx, m) => {
+    json(res, 200, await store.readSince(m[1], Number(ctx.url.searchParams.get('from'))));
   });
 
   // models / effort levels / modes, as reported by the installed Claude Code
@@ -239,12 +248,12 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
   // WhatsApp); `text` is a free-text answer. Delivered like any other prompt: straight into a
   // session running on the laptop, or into our own process.
   async function answerQuestion(id, { picks = [], text = '' }, ip) {
-    const q = store.pendingQuestion(id);
+    const q = await store.pendingQuestion(id);
     if (!q) throw httpErr(409, 'that question is no longer open');
     const { chosen, free, prompt } = buildAnswer(q, { picks, text });
 
     const run = runner.bySession(id);
-    const info = store.sessionInfo(id);
+    const info = await store.sessionInfo(id);
     const live = !run && info?.live;
     if (live) await injectMessage(cfg.claudeHome, live, prompt);
     else if (run) runner.writeUser(run, prompt);
@@ -272,7 +281,7 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
 
   route('POST', /^\/api\/sessions\/([0-9a-f-]{36})\/message$/, async (req, res, ctx, m) => {
     const b = await readJson(req);
-    const info = store.sessionInfo(m[1]);
+    const info = await store.sessionInfo(m[1]);
     const run = runner.bySession(m[1]);
     if (!info && !run) return json(res, 404, { error: 'session not found' });
     const fork = !!b.fork;
