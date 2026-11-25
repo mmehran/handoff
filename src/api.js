@@ -14,6 +14,7 @@ import { addSending } from './api-send.js';
 import { addFiles } from './api-files.js';
 import { addWebhooks } from './webhooks.js';
 import { addOpenAI } from './openai.js';
+import { addCompare } from './compare.js';
 
 export { API_PREFIX, apiErr, sendError, isWithin };
 const VERSION = (() => { try { return JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version; } catch { return '?'; } })();
@@ -260,6 +261,7 @@ export function createApi(core, { log = console.log } = {}) {
   addFiles(api, core);              // attached files, the project's files, git (api-files.js)
   addWebhooks(api, core);           // calls to a program's own address as turns need approval and end (webhooks.js)
   addOpenAI(api, core);             // POST /chat/completions for OpenAI-style clients (openai.js)
+  addCompare(api, core);            // POST /compare: one prompt, 2-3 models, side by side (compare.js)
   return api;
 }
 
