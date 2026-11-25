@@ -6,7 +6,7 @@
   "type": "module",
   "main": "server.js",
   "dependencies": {
-    "@whiskeysockets/baileys": "6.7.18",
+    "@whiskeysockets/baileys": "~6.7.24",
     "pino": "9.6.0",
     "qrcode": "1.5.4"
   },

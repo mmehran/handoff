@@ -90,6 +90,7 @@ Restart `npm start`. The log shows `[notify] WhatsApp notifications on -> +15551
 | Status | `curl http://127.0.0.1:7870/status` |
 | Stop / start | `docker compose stop` / `docker compose start` |
 | Update after pulling new code | `docker compose up -d --build` |
+| Keep the WhatsApp library current (about monthly) | `npm run update:whatsapp`. WhatsApp changes its protocol now and then and an old library stops connecting. This rebuilds the sender with the newest 6.7.x Baileys; the link survives, because the keys are in the volume. `curl http://127.0.0.1:7870/status` shows the version. |
 | Unlink the sending phone | Remove the device on the phone (Linked devices), or wipe the keys: `docker compose down -v` |
 | Turn notifications off | `HANDOFF_WHATSAPP_ENABLED=false`, then restart Handoff |
 | Change the recipient | `npm run setup:whatsapp` and type the new number, then `docker compose up -d` (the container needs the new allow-list) and restart Handoff |
@@ -111,6 +112,7 @@ Restart `npm start`. The log shows `[notify] WhatsApp notifications on -> +15551
 | Warning "the WhatsApp sender isn't running", or "WhatsApp service not running" | `docker compose ps`; start it with `docker compose up -d`. |
 | Warning "the sender can't reach WhatsApp" | The computer is offline or WhatsApp is unreachable. It reconnects by itself. |
 | QR page keeps changing | That's normal. A new code appears every ~20 s until it's scanned. |
+| Links fine but keeps disconnecting, or errors after a WhatsApp update | Run `npm run update:whatsapp`. |
 | Nothing arrives | Check `docker logs handoff-whatsapp`. Is the sending phone online? Is `HANDOFF_WHATSAPP_TO` correct, with country code? |
 | `WA_TOKEN missing or too short` in the container log | The token in `.env` must be 24+ characters. Re-run `npm run setup:whatsapp`. |
 | Port 7870 is already in use | Set `HANDOFF_WHATSAPP_PORT=7871` in `.env`, then `docker compose up -d` and restart Handoff. |

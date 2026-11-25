@@ -3,7 +3,7 @@
 // whose number should SEND the notifications. Session keys persist in /data/auth.
 //
 //   GET  /qr      page with the current QR code (auto-refreshes; says "Linked" when done)
-//   GET  /status  { connected, me }
+//   GET  /status  { connected, me, waitingForScan, baileys }
 //   GET  /inbox?since=<ms>  { now, messages:[{from,text,at}] }  replies from ALLOWED_TO (Bearer token)
 //   POST /send    { to, text }   Authorization: Bearer <WA_TOKEN>; `to` must be in ALLOWED_TO
 //   POST /logout  unlink this device                         (Bearer token)
@@ -24,6 +24,10 @@ const TOKEN = process.env.WA_TOKEN || '';
 const ALLOWED = (process.env.ALLOWED_TO || '').split(',').map(s => s.replace(/\D/g, '')).filter(Boolean);
 if (TOKEN.length < 24) { console.error('WA_TOKEN missing or too short'); process.exit(1); }
 if (!ALLOWED.length) { console.error('ALLOWED_TO is empty'); process.exit(1); }
+
+// WhatsApp changes its protocol now and then; an old Baileys stops working. Rebuild with npm run update:whatsapp.
+let BAILEYS = '?';
+try { BAILEYS = JSON.parse(fs.readFileSync(new URL('./node_modules/@whiskeysockets/baileys/package.json', import.meta.url), 'utf8')).version; } catch { /* unknown */ }
 
 const logger = pino({ level: 'warn' });
 let sock = null, qr = null, connected = false, me = null, retry = 0;
@@ -93,7 +97,7 @@ http.createServer(async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Cache-Control', 'no-store');
   try {
-    if (req.method === 'GET' && req.url === '/status') return json(res, 200, { connected, me, waitingForScan: !!qr });
+    if (req.method === 'GET' && req.url === '/status') return json(res, 200, { connected, me, waitingForScan: !!qr, baileys: BAILEYS });
     if (req.method === 'GET' && req.url.startsWith('/inbox')) {
       if (!authed(req)) return json(res, 401, { error: 'unauthorized' });
       const since = Number(new URL(req.url, 'http://x').searchParams.get('since')) || 0;
@@ -129,6 +133,6 @@ http.createServer(async (req, res) => {
     console.error('[wa] request failed', e.message);
     json(res, 500, { error: e.message });
   }
-}).listen(PORT, () => console.log(`[wa] listening on :${PORT}; allowed recipients: ${ALLOWED.map(n => '+' + n).join(', ')}`));
+}).listen(PORT, () => console.log(`[wa] listening on :${PORT} (Baileys ${BAILEYS}); allowed recipients: ${ALLOWED.map(n => '+' + n).join(', ')}`));
 
 connect().catch(e => { console.error('[wa] startup failed', e); process.exit(1); });
