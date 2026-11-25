@@ -426,13 +426,25 @@ pre.diff > span { display: block; padding: 0 14px; }
 .d-add { color: var(--d-add); background: color-mix(in srgb, var(--d-add) 12%, transparent); }
 .d-del { color: var(--d-del); background: color-mix(in srgb, var(--d-del) 12%, transparent); }
 .d-hunk { color: var(--d-hunk); } .d-meta { color: var(--muted); }
+/* commit, push, worktree: a tick per file, then the commit box under the list */
+.frow.pick { padding: 0; gap: 0; }
+.frow.pick:hover { background: var(--surface-2); }
+.fcheck { flex: none; align-self: stretch; display: flex; align-items: center; padding: 0 4px 0 14px; cursor: pointer; }
+.fcheck input, .files label.row input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.frow-link { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 10px 14px 10px 8px; color: inherit; text-decoration: none; }
+.git-card { display: flex; flex-direction: column; gap: 8px; }
+.git-card .row > .grow { min-width: 0; overflow-wrap: anywhere; }
+.git-card code { font: 12.5px var(--mono); }
+textarea.commit-msg { min-height: 78px; resize: vertical; line-height: 1.45; }
+.sheet-text { margin: 0 0 8px; color: var(--muted); line-height: 1.5; }
+.diff-path { color: var(--muted); overflow-wrap: anywhere; margin-top: -4px; }
 
 /* ---------- touch screens and small phones ---------- */
 @media (pointer: coarse) {
   input[type=text], input[type=password], input[type=search], select, textarea { font-size: 16px; } /* no zoom-on-focus in iOS */
   .btn, select { min-height: 44px; } .btn.sm { min-height: 36px; }
   .composer .opts select { min-height: 36px; font-size: 16px; }
-  .frow { padding: 13px 14px; } .tab { min-height: 44px; }
+  .frow { padding: 13px 14px; } .frow.pick { padding: 0; } .frow-link { padding: 13px 14px 13px 8px; } .tab { min-height: 44px; }
   details.tool summary { padding: 11px 12px; }
 }
 @media (max-width: 600px) {

@@ -89,6 +89,46 @@ export class Runner extends EventEmitter {
     });
   }
 
+  // Can a new process start in this folder? (also checked before a worktree is made for it)
+  checkStart(cwd) {
+    const active = [...this.runs.values()].filter(r => r.status !== 'exited').length;
+    if (active >= this.cfg.maxConcurrentRuns) throw httpErr(429, `too many running sessions (max ${this.cfg.maxConcurrentRuns}); stop one first`);
+    if (!cwd || !path.isAbsolute(cwd) || !fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) throw httpErr(400, 'working directory does not exist');
+    if (this.cfg.allowedRoots.length && !this.cfg.allowedRoots.some(root => isWithin(cwd, root))) throw httpErr(403, 'directory is outside allowedRoots');
+  }
+
+  // A one-off question to a quick model, answered as plain text (e.g. a commit message). No tools, no
+  // settings files or hooks, nothing saved: it never shows up as a chat.
+  async oneShot(prompt, { model = 'haiku', timeout = 90e3 } = {}) {
+    const attempt = restricted => new Promise((resolve, reject) => {
+      let cmd = this.claudePath, pre = [];
+      if (/\.(c|m)?js$/i.test(cmd)) { pre = [cmd]; cmd = process.execPath; }
+      const env = cleanEnv();
+      if (this.cfg.claudeOauthToken) env.CLAUDE_CODE_OAUTH_TOKEN = this.cfg.claudeOauthToken;
+      const args = ['-p', '--output-format', 'text', '--no-session-persistence', '--tools', '', '--model', model, ...(restricted ? ['--restricted'] : [])];
+      let proc;
+      try { proc = spawn(cmd, [...pre, ...args], { cwd: os.tmpdir(), env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }); }
+      catch (e) { return reject(httpErr(500, `couldn't start Claude: ${e.message}`)); }
+      let out = '', err = '';
+      const timer = setTimeout(() => { try { proc.kill(); } catch { /* gone */ } reject(httpErr(504, 'Claude took too long to answer')); }, timeout);
+      proc.stdout.setEncoding('utf8').on('data', d => { out += d; });
+      proc.stderr.setEncoding('utf8').on('data', d => { err = (err + d).slice(-2000); });
+      proc.on('error', e => { clearTimeout(timer); reject(httpErr(500, `couldn't start Claude: ${e.message}`)); });
+      proc.on('exit', code => {
+        clearTimeout(timer);
+        if (code === 0 && out.trim()) return resolve(out.trim());
+        const why = (err.trim() || out.trim()).split('\n').filter(Boolean).slice(-2).join(' ').slice(0, 300);
+        const e = httpErr(502, `Claude couldn't answer${why ? `: ${why}` : ''}`);
+        e.unknownOption = /unknown option/i.test(err);
+        reject(e);
+      });
+      proc.stdin.on('error', () => {});
+      proc.stdin.end(prompt);
+    });
+    // --restricted is newer than some installs: without it, --tools '' still leaves no tools
+    return attempt(true).catch(e => (e.unknownOption ? attempt(false) : Promise.reject(e)));
+  }
+
   publicRun(r) {
     return { runId: r.runId, sessionId: r.sessionId, cwd: r.cwd, status: r.status, mode: r.mode, model: r.model || 'default', effort: r.effort || null, startedAt: r.startedAt, lastActivity: r.lastActivity, lastError: r.lastError || null, pending: [...r.pending].length };
   }
@@ -125,10 +165,7 @@ export class Runner extends EventEmitter {
       this.writeUser(existing, content);
       return { sessionId: existing.sessionId, runId: existing.runId };
     }
-    const active = [...this.runs.values()].filter(r => r.status !== 'exited').length;
-    if (active >= this.cfg.maxConcurrentRuns) throw httpErr(429, `too many running sessions (max ${this.cfg.maxConcurrentRuns}); stop one first`);
-    if (!cwd || !path.isAbsolute(cwd) || !fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) throw httpErr(400, 'working directory does not exist');
-    if (this.cfg.allowedRoots.length && !this.cfg.allowedRoots.some(root => isWithin(cwd, root))) throw httpErr(403, 'directory is outside allowedRoots');
+    this.checkStart(cwd);
 
     const run = this.spawn({ cwd, resume: sessionId, fork, mode, model, effort });
     this.writeUser(run, content);

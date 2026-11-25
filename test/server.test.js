@@ -7,6 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-test-')));
 const home = path.join(tmp, 'claude-home');
@@ -336,6 +337,56 @@ test('with it on: list the session folder, read text, stream images with a sandb
   }
   assert.match(fs.readFileSync(path.join(tmp, 'data', 'audit.log'), 'utf8'), /"action":"file_view".*"path":"src\/main.ts"/);
   cfg.fileBrowser = false;
+});
+
+// ---- git from the Changes tab, and a new session in its own worktree ----
+test('a session in its own worktree; Claude drafts the commit message; commit; the worktree goes once clean', async () => {
+  Object.assign(process.env, { GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com' });
+  const proj = path.join(tmp, 'gitproj');
+  fs.mkdirSync(proj);
+  const g = (...a) => execFileSync('git', ['-c', 'core.autocrlf=false', ...a], { cwd: proj, stdio: 'pipe', encoding: 'utf8' }).trim();
+  g('init', '-q', '-b', 'main'); fs.writeFileSync(path.join(proj, 'app.js'), 'let a = 1;\n'); g('add', '-A'); g('commit', '-q', '-m', 'first');
+  cfg.fileBrowser = true;
+  try {
+    assert.equal((await req('GET', '/api/me')).json.git, true);
+    const perm = sseWait('/api/events', ev => ev === 'permission');
+    const r = await req('POST', '/api/sessions/new', { cwd: proj, text: 'Add a refund button', worktree: true });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.equal(r.json.worktree.branch, 'handoff/add-a-refund-button');
+    const wt = r.json.worktree.path;
+    assert.equal(wt, path.join(proj, '.claude', 'worktrees', 'add-a-refund-button'));
+    const p = await perm;
+    await req('POST', `/api/permissions/${p.id}`, { allow: true });
+    const id = r.json.sessionId;
+    fs.writeFileSync(path.join(wt, 'app.js'), 'let a = 2;\n');
+
+    let c = (await req('GET', `/api/sessions/${id}/changes`)).json;
+    assert.equal(c.worktree, 'add-a-refund-button');
+    assert.deepEqual(c.files.map(f => f.path), ['app.js']);
+    assert.equal((await req('POST', `/api/sessions/${id}/worktree/remove`)).status, 409, 'not while the session runs');
+
+    const draft = await req('POST', `/api/sessions/${id}/commit-message`, { paths: ['app.js'] });
+    assert.equal(draft.status, 200, JSON.stringify(draft.json));
+    assert.match(draft.json.message, /^Fake commit message\n\nRead \d+ characters, no tools\.$/);
+    const done = await req('POST', `/api/sessions/${id}/commit`, { message: 'Bump a', paths: ['app.js'] });
+    assert.equal(done.status, 200, JSON.stringify(done.json));
+    assert.equal(g('log', '-1', '--format=%s', 'handoff/add-a-refund-button'), 'Bump a');
+    assert.equal(fs.readFileSync(path.join(proj, 'app.js'), 'utf8'), 'let a = 1;\n', 'the main folder is untouched');
+    const pushed = await req('POST', `/api/sessions/${id}/push`);
+    assert.equal(pushed.status, 409, JSON.stringify(pushed.json));
+    assert.equal((await req('POST', `/api/sessions/${id}/discard`, { path: 'app.js' })).status, 400, 'nothing left to discard');
+
+    await req('POST', `/api/sessions/${id}/stop`);
+    for (let i = 0; i < 50 && (await req('GET', `/api/sessions/${id}`)).json.run?.status !== 'exited' && runner.bySession(id); i++) await new Promise(r => setTimeout(r, 100));
+    const gone = await req('POST', `/api/sessions/${id}/worktree/remove`);
+    assert.equal(gone.status, 200, JSON.stringify(gone.json));
+    assert.ok(!fs.existsSync(wt));
+    assert.match(fs.readFileSync(path.join(tmp, 'data', 'audit.log'), 'utf8'), /"action":"git_commit".*"hash":"[0-9a-f]+"/);
+
+    cfg.gitActions = false;
+    assert.equal((await req('POST', `/api/sessions/${id}/commit`, { message: 'x' })).status, 404);
+    assert.equal((await req('POST', '/api/sessions/new', { cwd: proj, text: 'x', worktree: true })).status, 403);
+  } finally { cfg.gitActions = true; cfg.fileBrowser = false; }
 });
 
 // ---- page version: an open page reloads itself when this changes ----

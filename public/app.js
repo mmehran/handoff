@@ -1033,24 +1033,139 @@ function filesPanel(id) {
   return { el, show, lastDir: () => lastDir };
 }
 
-// ---------- changes (uncommitted git changes in the session's folder; read-only) ----------
-// #/s/<id>?changes= lists the changed files, ?diff=<path> shows one file's diff.
+// ---------- changes (uncommitted git changes in the session's folder) ----------
+// #/s/<id>?changes= lists the changed files, ?diff=<path> shows one file's diff. With git actions on
+// (HANDOFF_GIT_ACTIONS): tick files and commit them (Claude can write the message), push, discard one
+// file's changes, and remove the session's own worktree once its work is committed.
+const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
+
+// "Are you sure?" with the risky button on the right; the sheet stays open (with the error) if it fails
+function confirmSheet(title, text, label, action) {
+  const err = h('div', { class: 'err' });
+  const go = h('button', { class: 'btn danger', onclick: async () => {
+    go.disabled = true; err.textContent = '';
+    try { await action(); close(); } catch (x) { if (x.message !== 'unauthorized') err.textContent = x.message; go.disabled = false; }
+  } }, label);
+  const close = openSheet(title, ...[text].flat().map(t => h('p', { class: 'small sheet-text' }, t)), err,
+    h('div', { class: 'row' }, h('span', { class: 'grow' }), h('button', { class: 'btn', onclick: () => close() }, 'Cancel'), go));
+  return close;
+}
+
 function changesPanel(id) {
   const el = h('div', { class: 'files' });
   const link = (key, p) => `#/s/${id}?${key}=${encodeURIComponent(p)}`;
   const BADGE = { modified: ['M', 'Modified'], added: ['A', 'Added'], deleted: ['D', 'Deleted'], renamed: ['R', 'Renamed'], untracked: ['N', 'New, not in git yet'], conflict: ['!', 'Merge conflict'] };
-  let seq = 0;
+  const gitOn = !!state.me.git;
+  const skip = new Set();   // files unticked for the next commit (anything new starts ticked)
+  const msg = h('textarea', { class: 'commit-msg', rows: '3', placeholder: 'Commit message', 'aria-label': 'Commit message' });
+  let last = null;          // the latest list: the diff page words Discard by the file's status
+  let pushed = null;        // the latest push, kept on screen (with its pull request link) across refreshes
+  let seq = 0, shown = '';
+  const refresh = () => show(new URLSearchParams('changes='));
+  const fail = (box, x) => { if (x.message !== 'unauthorized') { box.className = 'err'; box.textContent = x.message; } };
+
+  const fileLabel = f => [h('span', { class: `badge ${f.status}`, title: BADGE[f.status][1] }, BADGE[f.status][0]),
+    h('span', { class: 'fname mono' }, f.path), f.from ? h('span', { class: 'fmeta' }, `was ${f.from}`) : null];
+
+  const pushBox = d => {
+    const out = h('div', { class: 'small muted' });
+    const btn = h('button', { class: d.files.length ? 'btn' : 'btn primary', onclick: async () => {
+      btn.disabled = true; btn.textContent = 'Pushing…'; out.className = 'small muted'; out.textContent = '';
+      try {
+        pushed = await api('POST', `/api/sessions/${id}/push`);
+        toast(pushed.upToDate ? 'Already up to date' : `Pushed ${pushed.branch} to ${pushed.remote}`);
+        refresh();
+      } catch (x) { fail(out, x); btn.disabled = false; btn.textContent = 'Push'; }
+    } }, 'Push');
+    return h('div', { class: 'card git-card' }, ...[
+      d.ahead > 0 && h('div', { class: 'row' },
+        h('span', { class: 'grow' }, `⬆ ${plural(d.ahead, 'commit')} not pushed ${d.upstream ? `to ${d.upstream}` : 'yet'}`,
+          d.behind ? h('span', { class: 'muted' }, ` · ${d.behind} on the remote to pull first`) : null), btn),
+      pushed && h('div', { class: 'row' },
+        h('span', { class: 'grow small muted' }, pushed.upToDate ? 'Everything was already pushed.' : `Pushed ${pushed.branch} to ${pushed.remote}.`),
+        pushed.prUrl && h('a', { class: 'btn primary sm', href: pushed.prUrl, target: '_blank', rel: 'noopener noreferrer' }, `${pushed.prLabel} ↗`)),
+      out].filter(Boolean));
+  };
+
+  const worktreeBox = d => {
+    const out = h('div', { class: 'small muted' });
+    const rm = !gitOn || d.files.length ? null : h('button', { class: 'btn danger sm', onclick: () => confirmSheet('Remove this worktree?', [
+      `The folder .claude/worktrees/${d.worktree} is deleted. The branch ${d.branch} and its commits stay, so nothing committed is lost.`,
+      d.ahead > 0 ? `Its ${plural(d.ahead, 'commit')} ${d.ahead === 1 ? "isn't" : "aren't"} pushed yet: they stay on the branch on the laptop.` : null].filter(Boolean),
+    'Remove', async () => {
+      const r = await api('POST', `/api/sessions/${id}/worktree/remove`);
+      toast(`Removed the worktree; the branch ${r.branch || d.branch} is kept`, 5000);
+      refresh();
+    }) }, 'Remove worktree');
+    return h('div', { class: 'card git-card' },
+      h('div', { class: 'row' }, h('span', { class: 'grow' }, '🌿 Its own worktree ', h('b', {}, d.worktree), ' on ', h('code', {}, d.branch)), rm),
+      h('div', { class: 'small muted' }, d.files.length ? 'Commit or discard its changes, then the worktree can be removed.'
+        : 'All committed. Removing the worktree keeps its branch and commits.'), out);
+  };
 
   const renderList = d => {
+    last = d;
     if (!d.git) return el.replaceChildren(h('div', { class: 'empty' }, `Nothing to show: ${d.reason}.`));
-    const rows = d.files.map(f => h('a', { class: 'frow', href: link('diff', f.path) },
-      h('span', { class: `badge ${f.status}`, title: BADGE[f.status][1] }, BADGE[f.status][0]),
-      h('span', { class: 'fname mono' }, f.path), f.from ? h('span', { class: 'fmeta' }, `was ${f.from}`) : null));
+    const canCommit = gitOn && !d.detached && d.files.length > 0;
+    for (const p of [...skip]) if (!d.files.some(f => f.path === p)) skip.delete(p);
+    const picked = () => d.files.filter(f => !skip.has(f.path) && f.status !== 'conflict');
+    let busy = false;
+    const all = h('input', { type: 'checkbox', 'aria-label': 'Tick every file' });
+    const boxes = [];
+    const commitBtn = h('button', { class: 'btn primary' });
+    const draftBtn = h('button', { class: 'btn' }, '✨ Write with Claude');
+    const note = h('div', { class: 'small muted' });
+    const sync = () => {
+      const n = picked().length;
+      commitBtn.textContent = busy === 'commit' ? 'Committing…' : `Commit ${plural(n, 'file')}`;
+      commitBtn.disabled = draftBtn.disabled = !n || !!busy;
+      all.checked = n > 0 && n === d.files.length;
+      all.indeterminate = n > 0 && n < d.files.length;
+    };
+    const rows = d.files.map(f => {
+      if (!canCommit) return h('a', { class: 'frow', href: link('diff', f.path) }, ...fileLabel(f));
+      const box = h('input', { type: 'checkbox', 'aria-label': `Include ${f.path} in the commit`, disabled: f.status === 'conflict', onchange: () => { box.checked ? skip.delete(f.path) : skip.add(f.path); sync(); } });
+      box.checked = !skip.has(f.path) && f.status !== 'conflict';
+      boxes.push(box);
+      return h('div', { class: 'frow pick' }, h('label', { class: 'fcheck' }, box), h('a', { class: 'frow-link', href: link('diff', f.path) }, ...fileLabel(f)));
+    });
+    all.addEventListener('change', () => {
+      for (const f of d.files) all.checked ? skip.delete(f.path) : skip.add(f.path);
+      for (const b of boxes) if (!b.disabled) b.checked = all.checked;
+      sync();
+    });
+    draftBtn.addEventListener('click', async () => {
+      busy = 'draft'; sync(); draftBtn.textContent = 'Writing…';
+      note.className = 'small muted'; note.textContent = 'Claude is reading the changes…';
+      try {
+        const r = await api('POST', `/api/sessions/${id}/commit-message`, { paths: picked().map(f => f.path) });
+        msg.value = r.message;
+        note.textContent = 'Read it over and change anything you like, then commit.';
+      } catch (x) { fail(note, x); }
+      busy = false; draftBtn.textContent = '✨ Write with Claude'; sync();
+    });
+    commitBtn.addEventListener('click', async () => {
+      if (!msg.value.trim()) { note.className = 'err'; note.textContent = 'Write a commit message first, or let Claude write one.'; msg.focus(); return; }
+      busy = 'commit'; sync(); note.textContent = '';
+      try {
+        const r = await api('POST', `/api/sessions/${id}/commit`, { message: msg.value, paths: picked().map(f => f.path) });
+        msg.value = ''; skip.clear(); pushed = null;
+        toast(`Committed ${r.hash}: ${r.subject}`, 4000);
+        refresh();
+      } catch (x) { busy = false; fail(note, x); sync(); }
+    });
+    sync();
+    const where = d.detached ? 'Detached HEAD' : `On ${d.branch}`;
     el.replaceChildren(...[
-      h('div', { class: 'row small muted' }, `${d.branch ? `On ${d.branch} · ` : ''}${d.files.length}${d.truncated ? '+' : ''} file${d.files.length === 1 ? '' : 's'} changed since the last commit`,
-        h('span', { class: 'grow' }), h('button', { class: 'btn', onclick: () => show(new URLSearchParams('changes=')) }, 'Refresh')),
+      h('div', { class: 'row small muted' }, canCommit ? h('label', { class: 'row' }, all) : null,
+        h('span', { class: 'grow' }, d.files.length ? `${where} · ${d.files.length}${d.truncated ? '+' : ''} ${d.files.length === 1 ? 'file' : 'files'} changed since the last commit` : where),
+        h('button', { class: 'btn sm', onclick: () => refresh() }, 'Refresh')),
+      d.worktree && worktreeBox(d),
       rows.length ? h('div', { class: 'flist' }, ...rows) : h('div', { class: 'empty' }, 'No uncommitted changes.'),
-      d.truncated && h('div', { class: 'small muted' }, 'Only the first 500 files are shown.')].filter(Boolean));
+      d.truncated && h('div', { class: 'small muted' }, 'Only the first 500 files are shown.'),
+      canCommit && h('div', { class: 'card git-card' }, msg, h('div', { class: 'row' }, draftBtn, h('span', { class: 'grow' }), commitBtn), note),
+      gitOn && d.detached && d.files.length > 0 && h('div', { class: 'small muted' }, 'Not on a branch, so committing from here is off. Check out a branch on the laptop first.'),
+      gitOn && d.remotes > 0 && !d.detached && (d.ahead > 0 || pushed) && pushBox(d)].filter(Boolean));
   };
 
   const renderDiff = d => {
@@ -1061,16 +1176,30 @@ function changesPanel(id) {
       const s = document.createElement('span'); // one block per line, so added/removed colour spans the whole line
       s.className = cls || 'd-ctx'; s.textContent = line || ' '; pre.append(s);
     }
+    const info = last?.files?.find(f => f.path === d.path);
+    const isNew = info ? ['untracked', 'added'].includes(info.status) : /^--- \/dev\/null$/m.test(d.diff);
+    const name = d.path.split('/').pop();
+    const discardBtn = gitOn && d.diff.trim() && info?.status !== 'conflict' ? h('button', { class: 'btn danger', onclick: () => confirmSheet(`Discard changes to ${name}?`, [
+      isNew ? 'This file is new, so discarding deletes it.' : info?.status === 'renamed' ? `The rename is undone: it goes back to ${info.from}, as at the last commit.` : 'It goes back to how it was at the last commit.',
+      "A copy of the file as it is now is kept in Handoff's data folder (discarded) for 30 days."],
+    'Discard', async () => {
+      await api('POST', `/api/sessions/${id}/discard`, { path: d.path });
+      toast(`Discarded the changes to ${name}`);
+      location.hash = link('changes', '');
+    }) }, 'Discard') : null;
     el.replaceChildren(...[
-      h('div', { class: 'row' }, h('a', { class: 'btn', href: link('changes', '') }, '← All changes'), h('span', { class: 'grow mono small' }, d.path),
-        h('a', { class: 'btn', href: `#/s/${id}?file=${encodeURIComponent(d.path)}` }, 'Open file')),
+      h('div', { class: 'row' }, h('a', { class: 'btn', href: link('changes', '') }, '← All changes'), h('span', { class: 'grow' }),
+        h('a', { class: 'btn', href: `#/s/${id}?file=${encodeURIComponent(d.path)}` }, 'Open file'), discardBtn),
+      h('div', { class: 'mono small diff-path' }, d.path),
       d.truncated && h('div', { class: 'notice' }, 'This diff is large: only the first 1 MB is shown.'),
       d.diff.trim() ? h('div', { class: 'fcode' }, pre) : h('div', { class: 'empty' }, 'No differences from the last commit.')].filter(Boolean));
   };
 
   const show = async params => {
     const my = ++seq;
-    el.replaceChildren(h('div', { class: 'muted small' }, 'Loading…'));
+    const kind = params.has('diff') ? 'diff:' + params.get('diff') : 'list';
+    if (kind !== shown) el.replaceChildren(h('div', { class: 'muted small' }, 'Loading…')); // a refresh keeps what is on screen
+    shown = kind;
     try {
       if (params.has('diff')) { const d = await api('GET', `/api/sessions/${id}/diff?path=${encodeURIComponent(params.get('diff'))}`); if (my === seq) renderDiff(d); }
       else { const d = await api('GET', `/api/sessions/${id}/changes`); if (my === seq) renderList(d); }

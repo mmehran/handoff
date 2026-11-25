@@ -7,6 +7,14 @@ import readline from 'node:readline';
 
 const args = process.argv.slice(2);
 const opt = n => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : null; };
+// a one-off question (-p --output-format text): read it all, answer with a fenced "commit message"
+const oneShot = opt('--output-format') === 'text';
+if (oneShot) {
+  let input = '';
+  process.stdin.setEncoding('utf8').on('data', d => { input += d; }).on('end', () => {
+    process.stdout.write('```\nFake commit message\n\nRead ' + input.length + ' characters' + (args.includes('--tools') ? ', no tools' : '') + '.\n```\n');
+  });
+}
 const resume = opt('--resume');
 const fork = args.includes('--fork-session');
 const sessionId = resume && !fork ? resume : crypto.randomUUID();
@@ -26,8 +34,8 @@ const record = o => { const r = { ...o, uuid: crypto.randomUUID(), timestamp: ne
 
 let pending = null;
 let initDone = false;
-const rl = readline.createInterface({ input: process.stdin });
-rl.on('line', line => {
+const rl = oneShot ? null : readline.createInterface({ input: process.stdin });
+rl?.on('line', line => {
   const m = JSON.parse(line);
   if (m.type === 'control_request' && m.request.subtype === 'initialize') {
     out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id, response: {} } });

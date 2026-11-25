@@ -12,7 +12,7 @@ import { Notifier, buildAnswer } from './notify.js';
 import { FileBrowser } from './files.js';
 import { rotate } from './logfile.js';
 import { SearchIndex } from './search.js';
-import { changes, diff } from './changes.js';
+import { changes, diff, commit as gitCommit, push as gitPush, discard as gitDiscard, commitContext, tidyMessage, createWorktree, dropWorktree, removeWorktree } from './changes.js';
 import { parseImages, saveForLiveSession } from './attachments.js';
 import { PushService } from './push.js';
 import { Activity } from './activity.js';
@@ -164,7 +164,7 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
 
   // The settings the page is built with. `version` covers them and the page's own files: an open page
   // that reconnects and gets a different one (the server restarted with an update) reloads itself.
-  const pageSettings = () => ({ totp: cfg.totpEnabled, allowBypass: cfg.allowBypassPermissions, defaultMode: runner.normalizeMode(cfg.defaultPermissionMode), files: !!cfg.fileBrowser, search: !!cfg.search, push: !!cfg.push });
+  const pageSettings = () => ({ totp: cfg.totpEnabled, allowBypass: cfg.allowBypassPermissions, defaultMode: runner.normalizeMode(cfg.defaultPermissionMode), files: !!cfg.fileBrowser, git: !!cfg.gitActions, search: !!cfg.search, push: !!cfg.push });
   const pageFiles = crypto.createHash('sha256');
   for (const f of fs.readdirSync(PUBLIC, { withFileTypes: true }).filter(f => f.isFile()).map(f => f.name).sort()) pageFiles.update(f).update(fs.readFileSync(path.join(PUBLIC, f)));
   const filesHash = pageFiles.digest('hex');
@@ -317,6 +317,44 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
     audit(ctx.ip, 'diff_view', { sessionId: m[1], path: d.path });
     json(res, 200, d);
   });
+  // commit, push and discard (HANDOFF_GIT_ACTIONS), with the laptop's own git and its saved sign-ins
+  const gitFolder = async id => {
+    if (!cfg.gitActions) throw httpErr(404, 'git actions are turned off (HANDOFF_GIT_ACTIONS)');
+    return sessionFolder(id);
+  };
+  const pathList = v => (Array.isArray(v) ? v.slice(0, 5000).map(String) : undefined);
+  route('POST', /^\/api\/sessions\/([0-9a-f-]{36})\/commit-message$/, async (req, res, ctx, m) => {
+    const b = await readJson(req);
+    const prompt = await commitContext(files, await gitFolder(m[1]), pathList(b.paths));
+    json(res, 200, { message: tidyMessage(await runner.oneShot(prompt)) });
+  });
+  route('POST', /^\/api\/sessions\/([0-9a-f-]{36})\/commit$/, async (req, res, ctx, m) => {
+    const b = await readJson(req);
+    const r = await gitCommit(files, await gitFolder(m[1]), { message: b.message, paths: pathList(b.paths) });
+    audit(ctx.ip, 'git_commit', { sessionId: m[1], branch: r.branch, hash: r.hash, files: r.files, subject: r.subject.slice(0, 200) });
+    json(res, 200, r);
+  });
+  route('POST', /^\/api\/sessions\/([0-9a-f-]{36})\/push$/, async (req, res, ctx, m) => {
+    const r = await gitPush(files, await gitFolder(m[1]));
+    audit(ctx.ip, 'git_push', { sessionId: m[1], branch: r.branch, remote: r.remote });
+    json(res, 200, r);
+  });
+  route('POST', /^\/api\/sessions\/([0-9a-f-]{36})\/discard$/, async (req, res, ctx, m) => {
+    const b = await readJson(req);
+    const r = await gitDiscard(files, await gitFolder(m[1]), b.path, path.join(DATA_DIR, 'discarded'));
+    audit(ctx.ip, 'git_discard', { sessionId: m[1], path: r.path, status: r.status, saved: r.saved || undefined });
+    json(res, 200, r);
+  });
+  // a session's own worktree, once its work is committed (its branch stays)
+  route('POST', /^\/api\/sessions\/([0-9a-f-]{36})\/worktree\/remove$/, async (req, res, ctx, m) => {
+    const cwd = await gitFolder(m[1]);
+    const info = await store.sessionInfo(m[1]);
+    const run = runner.bySession(m[1]);
+    if ((run && run.status !== 'exited') || info?.live) throw httpErr(409, 'this session is still running: stop it first');
+    const r = await removeWorktree(files, cwd);
+    audit(ctx.ip, 'worktree_remove', { sessionId: m[1], name: r.name, branch: r.branch });
+    json(res, 200, r);
+  });
 
   // ---------- search (optional; on by default) ----------
   // The index is built in the background shortly after start, and topped up before every search.
@@ -390,9 +428,19 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
   route('POST', /^\/api\/sessions\/new$/, async (req, res, ctx) => {
     const b = await readJson(req, BODY_WITH_PHOTOS);
     const images = parseImages(b.images);
-    const r = await runner.send({ cwd: String(b.cwd || ''), text: String(b.text ?? ''), images, mode: b.mode, model: b.model || undefined, effort: b.effort || undefined });
-    audit(ctx.ip, 'session_new', { cwd: b.cwd, sessionId: r.sessionId, mode: b.mode, model: b.model, effort: b.effort, photos: images.length || undefined, text: String(b.text ?? '').slice(0, 200) });
-    json(res, 200, r);
+    let cwd = String(b.cwd || '').trim(), wt = null;
+    // its own worktree: a new folder and branch made from the project's last commit
+    if (b.worktree) {
+      if (!cfg.gitActions) throw httpErr(403, 'worktrees are turned off (HANDOFF_GIT_ACTIONS)');
+      runner.checkStart(cwd);
+      wt = await createWorktree(cwd, typeof b.worktree === 'string' && b.worktree.trim() ? b.worktree : String(b.text ?? ''));
+      cwd = wt.cwd;
+    }
+    let r;
+    try { r = await runner.send({ cwd, text: String(b.text ?? ''), images, mode: b.mode, model: b.model || undefined, effort: b.effort || undefined }); }
+    catch (e) { if (wt) await dropWorktree(wt); throw e; }
+    audit(ctx.ip, 'session_new', { cwd, sessionId: r.sessionId, worktree: wt?.branch, mode: b.mode, model: b.model, effort: b.effort, photos: images.length || undefined, text: String(b.text ?? '').slice(0, 200) });
+    json(res, 200, wt ? { ...r, worktree: { branch: wt.branch, path: wt.worktree, from: wt.from } } : r);
   });
 
   route('POST', /^\/api\/sessions\/([0-9a-f-]{36})\/message$/, async (req, res, ctx, m) => {
