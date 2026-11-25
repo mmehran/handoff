@@ -1,5 +1,6 @@
-// WhatsApp-only mode end to end: a fake WhatsApp sender, a fake "desktop" session (registry entry,
-// transcript and messaging inbox in a temp ~/.claude) and the real src/whatsapp-only.js process.
+// WhatsApp alerts on their own, end to end: a fake WhatsApp sender, a fake "desktop" session (registry
+// entry, transcript and messaging inbox in a temp ~/.claude) and the real Handoff process, started both
+// ways: `npm run whatsapp-only`, and `npm start` with the web app turned off.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,14 +13,6 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-wa-')));
-const home = path.join(tmp, 'claude');
-const work = path.join(tmp, 'work');
-const projKey = work.replace(/[^A-Za-z0-9]/g, '-');
-const sessionId = crypto.randomUUID();
-fs.mkdirSync(path.join(home, 'projects', projKey), { recursive: true });
-fs.mkdirSync(path.join(home, 'sessions'), { recursive: true });
-fs.mkdirSync(work, { recursive: true });
 
 const waitFor = async (what, fn, ms = 15000) => {
   const end = Date.now() + ms;
@@ -27,7 +20,21 @@ const waitFor = async (what, fn, ms = 15000) => {
   throw new Error(`timed out waiting for ${what}`);
 };
 
-test('WhatsApp-only: a desktop question goes out, a numbered reply is delivered into the session', async t => {
+test('WhatsApp alone (npm run whatsapp-only): a desktop question goes out, a numbered reply is delivered into the session', t =>
+  whatsappAlone(t, 'whatsapp-only.js', {}));
+test('WhatsApp alone (npm start, HANDOFF_WEB=false): a desktop question goes out, a numbered reply is delivered into the session', t =>
+  whatsappAlone(t, 'index.js', { HANDOFF_WEB: 'false' }));
+
+async function whatsappAlone(t, entry, extraEnv) {
+  const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-wa-')));
+  const home = path.join(tmp, 'claude');
+  const work = path.join(tmp, 'work');
+  const projKey = work.replace(/[^A-Za-z0-9]/g, '-');
+  const sessionId = crypto.randomUUID();
+  fs.mkdirSync(path.join(home, 'projects', projKey), { recursive: true });
+  fs.mkdirSync(path.join(home, 'sessions'), { recursive: true });
+  fs.mkdirSync(work, { recursive: true });
+
   // the desktop session's messaging inbox
   const inboxPath = process.platform === 'win32' ? String.raw`\\.\pipe\handoff-wa-` + crypto.randomUUID() : path.join(tmp, 'inbox.sock');
   const delivered = [];
@@ -51,8 +58,8 @@ test('WhatsApp-only: a desktop question goes out, a numbered reply is delivered 
   });
   await new Promise(r => sender.listen(0, '127.0.0.1', r));
 
-  const child = spawn(process.execPath, [path.join(ROOT, 'src', 'whatsapp-only.js')], {
-    env: { ...process.env, HANDOFF_ENV_FILE: path.join(tmp, 'none.env'), HANDOFF_DATA_DIR: path.join(tmp, 'data'), HANDOFF_CLAUDE_HOME: home,
+  const child = spawn(process.execPath, [path.join(ROOT, 'src', entry)], {
+    env: { ...process.env, ...extraEnv, HANDOFF_ENV_FILE: path.join(tmp, 'none.env'), HANDOFF_DATA_DIR: path.join(tmp, 'data'), HANDOFF_CLAUDE_HOME: home,
       HANDOFF_WHATSAPP_ENABLED: 'true', HANDOFF_WHATSAPP_TO: '+1 555 123 4567', HANDOFF_WHATSAPP_TOKEN: token,
       HANDOFF_WHATSAPP_URL: `http://127.0.0.1:${sender.address().port}`, HANDOFF_PUBLIC_HOSTNAME: 'claude.example.com' },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -83,4 +90,6 @@ test('WhatsApp-only: a desktop question goes out, a numbered reply is delivered 
   assert.match(delivered[1].message.content, /^My answers — Drink: Coffee/);
   await waitFor('the confirmation', () => sent.find(m => /Sent to Claude/.test(m.text)));
   assert.equal(sent.filter(m => /Answer sent/.test(m.text)).length, 0, 'one confirmation, not two');
-});
+  assert.match(out, /Handoff: WhatsApp alerts\b/);
+  assert.doesNotMatch(out, /Listening on/, 'nothing listens on a port');
+}

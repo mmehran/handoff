@@ -24,7 +24,11 @@ To run it while you work: `npm run setup` once (password and 2FA), then `npm run
 
 | Folder | What's in it |
 |---|---|
-| `src/server.js` | HTTP routes, sign-in, CSRF and security headers |
+| `src/services.js` | The parts you can turn on and off (web app, WhatsApp alerts), and what each needs |
+| `src/index.js` | `npm start`: starts the parts that are on; the HTTP server and tunnel only if one needs them |
+| `src/core.js` | What every part shares: history, the runner, alerts, the audit log, answering questions |
+| `src/server.js` | The HTTP server: security headers, the health check, and the parts that answer requests |
+| `src/web.js` | The web app's routes: sign-in, CSRF, pages and the `/api/*` they use |
 | `src/store.js` | Reads Claude Code's transcripts and session registry (read-only) |
 | `src/runner.js` | Starts and drives `claude` processes for sessions Handoff runs |
 | `src/notify.js`, `src/push.js` | Alerts: WhatsApp and phone push notifications |

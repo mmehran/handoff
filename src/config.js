@@ -56,6 +56,8 @@ export function loadConfig() {
     claudeHome: path.resolve(str('HANDOFF_CLAUDE_HOME', path.join(os.homedir(), '.claude'))),
     claudePath: str('HANDOFF_CLAUDE_PATH'),         // auto-detected when empty
     claudeOauthToken: str('CLAUDE_CODE_OAUTH_TOKEN'), // optional, from `claude setup-token`; only for processes we start
+    // the parts to run (see services.js); WhatsApp alerts are turned on by notify.enabled below
+    web: bool('HANDOFF_WEB', true),                   // the web app: browse and drive Claude Code from a browser
     passwordHash: str('HANDOFF_PASSWORD_HASH'),
     totpSecret,
     totpEnabled: !!totpSecret,

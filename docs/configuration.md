@@ -7,11 +7,20 @@ Every setting is an environment variable. Handoff reads them from `.env` in the 
 - Wrap a value in `'single quotes'` to keep it exactly as written. The setup scripts do this for the password hash.
 - To use a different file: `HANDOFF_ENV_FILE=/path/to/file npm start`.
 
+## What to run
+
+Handoff's parts can be used on their own or together; see [Choosing what to run](services.md). `npm run setup` asks which ones you want and writes these for you.
+
+| Variable | Default | |
+|---|---|---|
+| `HANDOFF_WEB` | `true` | The web app: browse and drive Claude Code from a browser, with phone notifications. `false` turns it off: no sign-in, no pages, and (unless another part needs it) no listening port and no tunnel. |
+| `HANDOFF_WHATSAPP_ENABLED` | `false` | WhatsApp alerts. See [WhatsApp](#whatsapp-optional) below. |
+
 ## Sign-in
 
 | Variable | Default | |
 |---|---|---|
-| `HANDOFF_PASSWORD_HASH` | — | **Required** for the web UI. Written by `npm run setup` (scrypt). |
+| `HANDOFF_PASSWORD_HASH` | — | **Required** for the web app. Written by `npm run setup` (scrypt). |
 | `HANDOFF_TOTP_SECRET` | empty | Base32 secret for authenticator-app 2FA. Empty = 2FA off. Written by `npm run setup`. |
 | `HANDOFF_LOGIN_IDLE_HOURS` | `24` | A sign-in expires after this much inactivity. |
 | `HANDOFF_LOGIN_MAX_DAYS` | `7` | A sign-in expires after this long regardless. |
@@ -78,7 +87,7 @@ The Cloudflare **API** token is never stored. `npm run setup:domain` reads it fr
 | `.env` | Settings and secrets (mode `600` where the filesystem supports it). Written only by the setup scripts. |
 | `data/sessions.json` | SHA-256 hashes of sign-in tokens, never the tokens themselves. |
 | `data/audit.log` | Sign-ins, prompts, approvals and stops, one JSON object per line. |
-| `data/server.log`, `data/whatsapp-only.log` | Output when started with `--log-file` (autostart). |
+| `data/server.log` | Output when started with `--log-file` (autostart). `npm run whatsapp-only` writes `data/whatsapp-only.log` instead. |
 | `data/public-url.txt` | The current public address. |
 
 Handoff never writes to `~/.claude`. The only exception is Claude Code itself, which records the sessions Handoff starts or resumes, just as it does for any session.
