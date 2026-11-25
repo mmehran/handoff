@@ -185,7 +185,7 @@ export function addSending(api, core) {
       key: k, ip: ctx.ip, target, fork, save, content, laptopText, prompt: original,
       model: m?.value, effort, mode, modeGiven: !!b.mode,
       api: { tools, system: b.system || undefined, schema: schema || undefined, maxBudgetUsd, deny },
-      ifBusy, ifLaptop, timeout, plain: !!(b.plain ?? k.defaults?.plain), webhook: b.webhook, warnings,
+      ifBusy, ifLaptop, timeout, plain: !!(b.plain ?? k.defaults?.plain), webhook: api.checkWebhook ? api.checkWebhook(b.webhook) : null, warnings,
       restricted: !keys.isFull(k)
     };
   }
