@@ -6,7 +6,7 @@ import path from 'node:path';
 import { parseEnv, updateEnvFile } from '../src/config.js';
 import { hashPassword, verifyPassword } from '../src/auth.js';
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-config-'));
+const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-config-')));
 
 test('parseEnv: comments, export, quotes, inline comments', () => {
   const env = parseEnv([

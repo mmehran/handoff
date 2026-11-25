@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import { Store, tailFile } from '../src/store.js';
 
 test('a half-written last line is not lost between initial load and live tail', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-store-'));
+  const home = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-store-')));
   const id = crypto.randomUUID();
   fs.mkdirSync(path.join(home, 'projects', 'p'), { recursive: true });
   const file = path.join(home, 'projects', 'p', id + '.jsonl');
@@ -21,7 +21,8 @@ test('a half-written last line is not lost between initial load and live tail', 
   const got = [];
   const stop = tailFile(file, t.end, o => got.push(o.uuid));
   fs.appendFileSync(file, full.slice(20));
-  await new Promise(r => setTimeout(r, 1500));
+  // file-change events can be slow (macOS); the poll every 3 s catches it anyway
+  for (let i = 0; i < 50 && !got.length; i++) await new Promise(r => setTimeout(r, 100));
   stop();
   assert.deepEqual(got, ['a2']);
 });
@@ -35,7 +36,7 @@ test('prompts delivered into a running session (peer messages) are shown as user
 });
 
 test('readSince returns only complete new lines and the next offset', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-since-'));
+  const home = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-since-')));
   const id = crypto.randomUUID();
   fs.mkdirSync(path.join(home, 'projects', 'p'), { recursive: true });
   const file = path.join(home, 'projects', 'p', id + '.jsonl');

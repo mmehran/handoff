@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-test-'));
+const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-test-')));
 const home = path.join(tmp, 'claude-home');
 const work = path.join(tmp, 'work');
 fs.mkdirSync(work, { recursive: true });

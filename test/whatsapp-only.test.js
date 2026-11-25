@@ -12,7 +12,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-wa-'));
+const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-wa-')));
 const home = path.join(tmp, 'claude');
 const work = path.join(tmp, 'work');
 const projKey = work.replace(/[^A-Za-z0-9]/g, '-');

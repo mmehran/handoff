@@ -239,7 +239,7 @@ test('during quiet hours alerts are held (unless allowed), then one summary goes
 
 test('muted projects send nothing, and the list is kept on disk', async () => {
   const fs = await import('node:fs'), os = await import('node:os'), path = await import('node:path');
-  const prefsFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-mute-')), 'notify.json');
+  const prefsFile = path.join(fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-mute-'))), 'notify.json');
   const make = () => new Notifier({ notify: { enabled: true, token: 't'.repeat(30), to: '15551234567' } },
     { store: { sessionInfo: async () => null }, runner: new EventEmitter(), log: () => {}, send: async () => {}, prefsFile });
   const n = make();

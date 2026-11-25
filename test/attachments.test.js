@@ -31,7 +31,7 @@ test('image blocks for Claude Code: the text, then each photo', () => {
 });
 
 test('for a session on the laptop, photos are saved in the project, ignored by git, and named in the message', async () => {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-uploads-'));
+  const cwd = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-uploads-')));
   const dir = path.join(cwd, UPLOAD_DIR);
   fs.mkdirSync(dir);
   const old = path.join(dir, 'old.jpg');

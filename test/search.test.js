@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-search-test-'));
+const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-search-test-')));
 process.env.HANDOFF_DATA_DIR = path.join(tmp, 'data');
 process.env.HANDOFF_ENV_FILE = path.join(tmp, 'no-such.env');
 const { Store } = await import('../src/store.js');

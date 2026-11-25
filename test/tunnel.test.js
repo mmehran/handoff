@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-tunnel-'));
+const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-tunnel-')));
 process.env.HANDOFF_DATA_DIR = tmp; // public-url.txt goes here
 process.env.HANDOFF_ENV_FILE = path.join(tmp, 'no-such.env'); // never read a developer's real .env
 const { startNamedTunnel } = await import('../src/tunnel.js');

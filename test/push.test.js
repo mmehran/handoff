@@ -23,7 +23,7 @@ test('only real browser push services are accepted as destinations', () => {
 });
 
 test('subscribe, send (signed and encrypted for the device), drop expired devices', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-push-'));
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-push-')));
   const calls = [];
   let status = 201;
   const svc = new PushService({ dataDir: dir, contact: 'https://h.example.com', fetchFn: async (url, opts) => { calls.push({ url, opts }); return { ok: status < 300, status }; } });

@@ -14,7 +14,7 @@
     "start": "node src/index.js",
     "start:local": "node src/index.js --local",
     "whatsapp-only": "node src/whatsapp-only.js",
-    "test": "node --test test/*.test.js"
+    "test": "node scripts/run-tests.js"
   },
   "keywords": [
     "claude-code",

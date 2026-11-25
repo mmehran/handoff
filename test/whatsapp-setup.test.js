@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { parseEnv } from '../src/config.js';
 
 const script = fileURLToPath(new URL('../scripts/whatsapp-setup.js', import.meta.url));
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-wa-setup-'));
+const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-wa-setup-')));
 
 // Runs the setup script against its own .env, with `input` as what the user types.
 function run(envFile, args, input = '') {
