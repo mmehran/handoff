@@ -5,13 +5,32 @@
 //      status -> "waiting"   needs your input/approval (waitingFor says what)
 //      "busy" -> "idle"      finished its work
 // +923001234567 -> +92•••••4567: logs show which number without giving it away
+import fs from 'node:fs';
+
 export const maskNumber = n => { const d = String(n || '').replace(/\D/g, ''); return d.length > 6 ? `+${d.slice(0, 2)}${'•'.repeat(d.length - 6)}${d.slice(-4)}` : '+' + '•'.repeat(d.length); };
 
 const PER_SESSION_GAP = 20e3;   // same kind of message for one session at most every 20s
 const MAX_PER_MINUTE = 12;
+const HELD_MAX = 50;
+
+// Quiet hours "23:00-07:00" (the computer's local time; may span midnight) -> { from, to, text } in minutes
+export function parseQuiet(s) {
+  const m = /^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$/.exec(String(s || ''));
+  if (!m) return null;
+  const from = +m[1] * 60 + +m[2], to = +m[3] * 60 + +m[4];
+  if (+m[1] > 23 || +m[3] > 23 || +m[2] > 59 || +m[4] > 59 || from === to) return null;
+  return { from, to, text: String(s).trim() };
+}
+export function inQuiet(q, date = new Date()) {
+  if (!q) return false;
+  const t = date.getHours() * 60 + date.getMinutes();
+  return q.from < q.to ? t >= q.from && t < q.to : t >= q.from || t < q.to;
+}
+const sameFolder = process.platform === 'win32' ? s => String(s).toLowerCase() : s => String(s);
 
 export class Notifier {
-  constructor(cfg, { store, runner, log = console.log, send, onAnswer, onApproval, onLinkChange } = {}) {
+  // prefsFile: where muted projects are kept (data/notify.json)
+  constructor(cfg, { store, runner, log = console.log, send, onAnswer, onApproval, onLinkChange, prefsFile, now = () => new Date() } = {}) {
     this.cfg = cfg;
     this.store = store;
     this.runner = runner;
@@ -29,6 +48,51 @@ export class Notifier {
     this.openAsk = null;     // the question a WhatsApp reply would answer
     this.openPerm = null;    // the approval a WhatsApp yes/no would answer
     this.inboxSince = 0;
+    this.now = now;
+    this.quiet = parseQuiet(cfg.notify?.quiet);
+    if (cfg.notify?.quiet && !this.quiet) log(`[notify] ignoring HANDOFF_WHATSAPP_QUIET="${cfg.notify.quiet}": use HH:MM-HH:MM, e.g. 23:00-07:00`);
+    this.quietAllow = new Set(cfg.notify?.quietAllow || []);
+    this.held = [];          // alerts kept back during quiet hours, summed up afterwards
+    this.prefsFile = prefsFile;
+    this.muted = new Map();  // project folders whose alerts are off: compared folder name -> as written
+    try { for (const c of JSON.parse(fs.readFileSync(prefsFile, 'utf8')).muted || []) this.muted.set(sameFolder(c), c); } catch { /* none yet */ }
+  }
+
+  // ----- quiet hours and muted projects -----
+  isMuted(cwd) { return !!cwd && this.muted.has(sameFolder(cwd)); }
+  setMuted(cwd, on) {
+    if (!cwd) return;
+    if (on) this.muted.set(sameFolder(cwd), cwd); else this.muted.delete(sameFolder(cwd));
+    if (this.prefsFile) fs.writeFileSync(this.prefsFile, JSON.stringify({ muted: [...this.muted.values()] }, null, 2));
+  }
+  prefs() {
+    return {
+      enabled: this.on, quiet: this.quiet ? { text: this.quiet.text, active: inQuiet(this.quiet, this.now()), allow: [...this.quietAllow] } : null,
+      muted: [...this.muted.values()], held: this.held.length
+    };
+  }
+
+  // After quiet hours, one message sums up what was kept back
+  async flushHeld() {
+    if (!this.held.length || inQuiet(this.quiet, this.now())) return;
+    const held = this.held.splice(0);
+    const lines = [];
+    for (const [kind, label] of [['question', '❓ Asked you'], ['approval', '🔐 Needed approval'], ['waiting', '⏳ Waiting for you'], ['error', '⚠️ Hit an error'], ['done', '✅ Finished']]) {
+      const ids = [...new Set(held.filter(h => h.kind === kind).map(h => h.sessionId))];
+      if (!ids.length) continue;
+      const names = await Promise.all(ids.slice(0, 6).map(async id => {
+        const h = held.find(x => x.sessionId === id);
+        let info = null;
+        try { info = await this.store.sessionInfo(id); } catch { /* gone */ }
+        const project = (h.cwd || info?.cwd || '').split(/[\\/]/).filter(Boolean).pop();
+        return `${h.title || info?.title || 'Claude session'}${project ? ` (${project})` : ''}`;
+      }));
+      lines.push(`${label}: ${names.join(', ')}${ids.length > 6 ? ` and ${ids.length - 6} more` : ''}`);
+    }
+    const link = this.cfg.publicHostname ? `\n\nOpen: https://${this.cfg.publicHostname}/` : '';
+    this.send(`*🌙 While quiet hours were on (${this.quiet?.text || ''})*\n${lines.join('\n')}${link}`)
+      .then(() => this.log(`[notify] sent the quiet-hours summary (${held.length} alert${held.length === 1 ? '' : 's'})`))
+      .catch(e => this.log(`[notify] WhatsApp send failed (quiet-hours summary): ${e.message}`));
   }
 
   get on() { return !!(this.cfg.notify?.enabled && this.cfg.notify.token && this.cfg.notify.to); }
@@ -95,7 +159,7 @@ export class Notifier {
   async scan() {
     if (this.scanning) return;
     this.scanning = true;
-    try { await this.compare(); } finally { this.scanning = false; }
+    try { await this.flushHeld(); await this.compare(); } finally { this.scanning = false; }
   }
 
   async compare() {
@@ -194,6 +258,12 @@ export class Notifier {
 
   event(kind, sessionId, { detail = '', cwd = '', title = '', force = false } = {}) {
     if (!this.on || !this.wants(kind) || !sessionId) return false;
+    if (this.isMuted(cwd)) return false;
+    if (inQuiet(this.quiet, this.now()) && !this.quietAllow.has(kind)) {
+      this.held.push({ kind, sessionId, title, cwd, at: Date.now() });
+      if (this.held.length > HELD_MAX) this.held.shift();
+      return false;
+    }
     const key = `${sessionId}:${kind}`, t = Date.now();
     if (!force && t - (this.last.get(key) || 0) < PER_SESSION_GAP) return false;
     this.sent = this.sent.filter(x => t - x < 60e3);

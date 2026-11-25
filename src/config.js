@@ -80,6 +80,8 @@ export function loadConfig() {
       url: str('HANDOFF_WHATSAPP_URL', `http://127.0.0.1:${num('HANDOFF_WHATSAPP_PORT', 7870)}`).replace(/\/+$/, ''),
       token: str('HANDOFF_WHATSAPP_TOKEN'),
       to: str('HANDOFF_WHATSAPP_TO').replace(/\D/g, ''),
+      quiet: str('HANDOFF_WHATSAPP_QUIET'),                     // e.g. 23:00-07:00: alerts held back, summed up afterwards
+      quietAllow: list('HANDOFF_WHATSAPP_QUIET_ALLOW', ','),   // kinds still sent during quiet hours, e.g. approval,question
       events: Object.fromEntries(NOTIFY_EVENTS.map(k => [k, !events.length || events.includes(k)]))
     }
   };

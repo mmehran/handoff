@@ -67,7 +67,7 @@ test('loadConfig reads the .env file; real environment variables win', async () 
   assert.deepEqual(cfg.allowedRoots, [path.join(tmp, 'a'), path.join(tmp, 'b')]);
   assert.equal(DATA_DIR, path.join(tmp, 'data'));
   assert.deepEqual(cfg.notify, {
-    enabled: true, url: 'http://127.0.0.1:7999', token: '', to: '15551234567',
+    enabled: true, url: 'http://127.0.0.1:7999', token: '', to: '15551234567', quiet: '', quietAllow: [],
     events: { approval: false, question: false, waiting: false, done: true, error: true }
   });
   assert.equal(process.env.HANDOFF_PORT, undefined, 'the file is not copied into process.env');

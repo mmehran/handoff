@@ -63,6 +63,8 @@ The Cloudflare **API** token is never stored. `npm run setup:domain` reads it fr
 | `HANDOFF_WHATSAPP_PORT` | `7870` | Port the sender is published on (`127.0.0.1` only). |
 | `HANDOFF_WHATSAPP_URL` | `http://127.0.0.1:<port>` | Only if the sender runs elsewhere. |
 | `HANDOFF_WHATSAPP_EVENTS` | all | Comma-separated: `approval`, `question`, `waiting`, `done`, `error`. |
+| `HANDOFF_WHATSAPP_QUIET` | empty | Quiet hours in the computer's local time, e.g. `23:00-07:00`. Alerts in that window are held, then summed up in one message when it ends. |
+| `HANDOFF_WHATSAPP_QUIET_ALLOW` | empty | Kinds still sent during quiet hours, comma-separated, e.g. `approval,question`. |
 
 `docker-compose.yml` reads `HANDOFF_WHATSAPP_TOKEN`, `HANDOFF_WHATSAPP_TO` and `HANDOFF_WHATSAPP_PORT` from the same `.env`.
 

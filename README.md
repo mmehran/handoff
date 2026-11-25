@@ -22,7 +22,7 @@ It's a small Node.js server with no npm dependencies. It listens on `127.0.0.1` 
 - **See what Claude changed (optional).** A Changes tab lists the project's uncommitted git changes and shows each file's diff. Both tabs are read-only and off until you set `HANDOFF_FILE_BROWSER=true`.
 - **Search every chat.** One search box finds words in all your prompts and Claude's replies, across every project; each session can be searched on its own, and a hit opens in context.
 - **Remember me.** Tick it when you sign in on your own phone and it stays signed in for 30 days.
-- **WhatsApp alerts (optional).** Get a message when a session needs approval, asks a question, is waiting, finishes or fails. Reply `yes`/`no` or an option number to answer straight from WhatsApp. This uses a self-hosted sender built on the open-source [Baileys](https://github.com/WhiskeySockets/Baileys) library, so there's no paid API.
+- **WhatsApp alerts (optional).** Get a message when a session needs approval, asks a question, is waiting, finishes or fails. Reply `yes`/`no` or an option number to answer straight from WhatsApp. Set quiet hours (one summary afterwards) or mute individual projects. This uses a self-hosted sender built on the open-source [Baileys](https://github.com/WhiskeySockets/Baileys) library, so there's no paid API.
 - **Works on a phone.** The layout is responsive and touch-friendly, and you can install it to the home screen as a PWA.
 
 ## Pick your setup

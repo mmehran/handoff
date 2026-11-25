@@ -5,7 +5,8 @@
 //
 //   npm run whatsapp-only            (needs HANDOFF_WHATSAPP_* in .env: npm run setup:whatsapp)
 import { EventEmitter } from 'node:events';
-import { loadConfig } from './config.js';
+import path from 'node:path';
+import { loadConfig, DATA_DIR } from './config.js';
 import { Store } from './store.js';
 import { Notifier, buildAnswer, maskNumber } from './notify.js';
 import { injectMessage } from './inbox.js';
@@ -26,7 +27,7 @@ const store = new Store(cfg);
 const runner = Object.assign(new EventEmitter(), { bySession: () => null });
 
 const notifier = new Notifier({ ...cfg, publicHostname: '' }, { // no web UI, so no "Open:" links
-  store, runner,
+  store, runner, prefsFile: path.join(DATA_DIR, 'notify.json'),
   onAnswer: async (sessionId, pick) => {
     const q = await store.pendingQuestion(sessionId);
     if (!q) throw new Error('That question is no longer open.');

@@ -61,8 +61,18 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
     onAnswer: (sessionId, pick) => answerQuestion(sessionId, pick, 'whatsapp'),
     onApproval: (permId, allow) => runner.decide(permId, { allow, message: 'Denied from WhatsApp' }),
     // open pages show a warning while WhatsApp alerts can't be delivered
-    onLinkChange: s => broadcast('whatsapp', s)
+    onLinkChange: s => broadcast('whatsapp', s),
+    prefsFile: path.join(DATA_DIR, 'notify.json') // projects muted from the web app
   }).start();
+  route('GET', /^\/api\/notify\/prefs$/, (req, res) => json(res, 200, notifier.prefs()));
+  route('POST', /^\/api\/notify\/mute$/, async (req, res, ctx) => {
+    const b = await readJson(req);
+    const cwd = String(b.cwd || '');
+    if (!cwd || cwd.length > 1000) throw httpErr(400, 'which project folder?');
+    notifier.setMuted(cwd, !!b.muted);
+    audit(ctx.ip, 'notify_mute', { cwd, muted: !!b.muted });
+    json(res, 200, notifier.prefs());
+  });
   route('GET', /^\/api\/notify$/, async (req, res) => json(res, 200, await notifier.status()));
   route('POST', /^\/api\/notify\/test$/, async (req, res, ctx) => {
     if (!notifier.on) return json(res, 400, { error: 'WhatsApp notifications are not set up' });

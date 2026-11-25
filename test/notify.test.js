@@ -199,3 +199,55 @@ test('phone numbers are masked in logs', async () => {
   assert.ok(logs.some(l => l.includes('+92••••••4567')));
   assert.ok(!logs.join('\n').includes('923001234567'));
 });
+
+test('quiet hours: parsed in local time, may span midnight', async () => {
+  const { parseQuiet, inQuiet } = await import('../src/notify.js');
+  const q = parseQuiet('23:00-07:00');
+  const at = (h, m = 0) => new Date(2026, 10, 25, h, m);
+  assert.equal(inQuiet(q, at(23, 30)), true);
+  assert.equal(inQuiet(q, at(6, 59)), true);
+  assert.equal(inQuiet(q, at(7, 0)), false);
+  assert.equal(inQuiet(parseQuiet('13:00-14:00'), at(13, 30)), true);
+  assert.equal(parseQuiet('25:00-07:00'), null);
+  assert.equal(parseQuiet('soon'), null);
+  assert.equal(inQuiet(null), false);
+});
+
+test('during quiet hours alerts are held (unless allowed), then one summary goes out', async () => {
+  let clock = new Date(2026, 10, 25, 2, 0);
+  const sent = [];
+  const n = new Notifier({ publicHostname: 'h.example.com', notify: { enabled: true, token: 't'.repeat(30), to: '15551234567', quiet: '23:00-07:00', quietAllow: ['approval'] } },
+    { store: { sessionInfo: async id => ({ title: `Chat ${id}`, cwd: 'D:\\work\\shop' }) }, runner: new EventEmitter(), log: () => {}, send: async t => { sent.push(t); }, now: () => clock });
+  assert.equal(n.event('done', 'a'), false);
+  assert.equal(n.event('waiting', 'b', { cwd: 'D:\\work\\api' }), false);
+  assert.equal(n.event('done', 'c'), false);
+  assert.ok(n.event('approval', 'd'), 'allowed kinds still go out');
+  await settle();
+  assert.equal(sent.length, 1);
+  assert.equal(n.prefs().held, 3);
+  await n.flushHeld();
+  assert.equal(sent.length, 1, 'still quiet: nothing more');
+  clock = new Date(2026, 10, 25, 7, 1);
+  await n.flushHeld(); await settle();
+  assert.equal(sent.length, 2);
+  assert.match(sent[1], /While quiet hours were on \(23:00-07:00\)/);
+  assert.match(sent[1], /⏳ Waiting for you: Chat b \(api\)/);
+  assert.match(sent[1], /✅ Finished: Chat a \(shop\), Chat c \(shop\)/);
+  assert.match(sent[1], /Open: https:\/\/h\.example\.com\//);
+  assert.equal(n.prefs().held, 0);
+});
+
+test('muted projects send nothing, and the list is kept on disk', async () => {
+  const fs = await import('node:fs'), os = await import('node:os'), path = await import('node:path');
+  const prefsFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-mute-')), 'notify.json');
+  const make = () => new Notifier({ notify: { enabled: true, token: 't'.repeat(30), to: '15551234567' } },
+    { store: { sessionInfo: async () => null }, runner: new EventEmitter(), log: () => {}, send: async () => {}, prefsFile });
+  const n = make();
+  n.setMuted('D:\\Work\\Shop', true);
+  assert.equal(n.event('done', 'a', { cwd: 'D:\\Work\\Shop' }), false);
+  assert.ok(n.event('done', 'b', { cwd: 'D:\\Work\\Api' }));
+  assert.equal(make().isMuted('D:\\Work\\Shop'), true, 'remembered after a restart');
+  if (process.platform === 'win32') assert.equal(make().isMuted('d:\\work\\shop'), true, 'Windows folder names ignore case');
+  n.setMuted('D:\\Work\\Shop', false);
+  assert.equal(make().isMuted('D:\\Work\\Shop'), false);
+});

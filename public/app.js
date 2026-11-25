@@ -137,6 +137,7 @@ function setTop(title, backHref) {
 $('#menu').addEventListener('click', () => {
   const sheet = h('div', { class: 'list' },
     h('button', { class: 'btn', onclick: () => { location.hash = '#/new'; close(); } }, '+ New session'),
+    state.me?.whatsapp?.enabled ? h('button', { class: 'btn', onclick: () => { close(); showAlertSettings(); } }, 'WhatsApp alerts…') : null,
     h('button', { class: 'btn', onclick: async () => {
       try { await api('POST', '/api/notify/test'); toast('Test WhatsApp message sent'); }
       catch (x) { toast('WhatsApp: ' + x.message, 6000); }
@@ -150,6 +151,34 @@ $('#menu').addEventListener('click', () => {
   ps.replaceChildren(wrap); ps.hidden = false; ps.dataset.kind = 'menu';
   function close() { ps.dataset.kind = ''; renderPerms(); }
 });
+
+// ---------- WhatsApp alert settings: quiet hours and muted projects ----------
+const sameDir = (a, b) => String(a).toLowerCase() === String(b).toLowerCase(); // the server compares case-insensitively on Windows
+async function showAlertSettings() {
+  const box = h('div', { class: 'list' }, h('div', { class: 'muted small' }, 'Loading…'));
+  const close = () => { overlay.remove(); removeEventListener('keydown', onKey); };
+  const onKey = e => { if (e.key === 'Escape') close(); };
+  const overlay = h('div', { class: 'overlay', onclick: e => { if (e.target === overlay) close(); } },
+    h('div', { class: 'ctx-sheet', role: 'dialog', 'aria-label': 'WhatsApp alerts' },
+      h('div', { class: 'row' }, h('b', {}, 'WhatsApp alerts'), h('span', { class: 'grow' }), h('button', { class: 'icon', 'aria-label': 'Close', onclick: close }, '×')), box));
+  document.body.append(overlay);
+  addEventListener('keydown', onKey);
+  const render = pr => {
+    const names = new Map(state.projects.map(p => [p.cwd.toLowerCase(), p.name]));
+    box.replaceChildren(
+      h('div', { class: 'label' }, 'Quiet hours'),
+      pr.quiet
+        ? h('div', {}, `${pr.quiet.text}${pr.quiet.active ? ' (on now)' : ''}: alerts are held and summed up in one message afterwards.${pr.quiet.allow.length ? ` Still sent: ${pr.quiet.allow.join(', ')}.` : ''}${pr.held ? ` ${pr.held} held so far.` : ''}`)
+        : h('div', { class: 'muted' }, 'Not set. Add HANDOFF_WHATSAPP_QUIET=23:00-07:00 to .env (the computer\'s time) and restart Handoff.'),
+      h('div', { class: 'label' }, 'Muted projects'),
+      ...(pr.muted.length ? pr.muted.map(cwd => h('div', { class: 'row' },
+        h('span', { class: 'grow mono small' }, names.get(cwd.toLowerCase()) ? `${names.get(cwd.toLowerCase())} · ${cwd}` : cwd),
+        h('button', { class: 'btn', onclick: async () => render(await api('POST', '/api/notify/mute', { cwd, muted: false })) }, 'Unmute')))
+        : [h('div', { class: 'muted' }, 'None. Mute a project from its page.')]));
+  };
+  try { render(await api('GET', '/api/notify/prefs')); }
+  catch (x) { box.replaceChildren(h('div', { class: 'empty' }, x.message)); }
+}
 
 // ---------- login ----------
 function showLogin() {
@@ -451,9 +480,20 @@ async function projectView(key) {
   const p = projects.find(x => x.key === key) || { name: key, cwd: '' };
   setTop(p.name, '#/');
   const list = h('div', { class: 'list' }, h('div', { class: 'muted small' }, 'Loading…'));
+  // WhatsApp alerts can be muted per project (kept on the server)
+  let muted = false;
+  const muteBtn = state.me.whatsapp?.enabled && p.cwd ? h('button', { class: 'btn', onclick: async () => {
+    try {
+      await api('POST', '/api/notify/mute', { cwd: p.cwd, muted: !muted });
+      muted = !muted; label();
+      toast(muted ? 'WhatsApp alerts muted for this project' : 'WhatsApp alerts are on again for this project');
+    } catch (x) { toast(x.message); }
+  } }) : null;
+  const label = () => { muteBtn.textContent = muted ? '🔔 Unmute alerts' : '🔕 Mute alerts'; };
+  if (muteBtn) { label(); api('GET', '/api/notify/prefs').then(pr => { muted = pr.muted.some(c => sameDir(c, p.cwd)); label(); }).catch(() => {}); }
   view.replaceChildren(
     h('div', { class: 'session-head' }, h('div', { class: 'mono' }, p.cwd),
-      h('div', { class: 'row' }, h('a', { class: 'btn primary', href: `#/new?cwd=${encodeURIComponent(p.cwd)}` }, '+ New session here'))),
+      h('div', { class: 'row' }, h('a', { class: 'btn primary', href: `#/new?cwd=${encodeURIComponent(p.cwd)}` }, '+ New session here'), muteBtn)),
     h('h2', {}, 'Sessions'), list);
   const sessions = await api('GET', `/api/projects/${encodeURIComponent(key)}/sessions`);
   list.replaceChildren(...sessions.map(s => h('a', { class: 'card', href: `#/s/${s.id}` },
