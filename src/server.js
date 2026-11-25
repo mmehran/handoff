@@ -12,6 +12,7 @@ import { Notifier, buildAnswer } from './notify.js';
 import { FileBrowser } from './files.js';
 import { rotate } from './logfile.js';
 import { SearchIndex } from './search.js';
+import { changes, diff } from './changes.js';
 
 const PUBLIC = path.join(ROOT, 'public');
 const COOKIE = 'handoff_sid';
@@ -224,6 +225,29 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
       'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(f.name)}`
     });
     fs.createReadStream(f.abs).on('error', () => res.destroy()).pipe(res);
+  });
+  // find files and folders by name anywhere in the project
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/find$/, async (req, res, ctx, m) => {
+    json(res, 200, await files.find(await sessionFolder(m[1]), String(ctx.url.searchParams.get('q') || '').slice(0, 200)));
+  });
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/download$/, async (req, res, ctx, m) => {
+    const f = files.download(await sessionFolder(m[1]), ctx.url.searchParams.get('path'));
+    audit(ctx.ip, 'file_download', { sessionId: m[1], path: f.path });
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream', 'Content-Length': f.size, 'Cache-Control': 'private, no-store',
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(f.name)}`
+    });
+    fs.createReadStream(f.abs).on('error', () => res.destroy()).pipe(res);
+  });
+  // Changes tab: the folder's uncommitted git changes, and one file's diff
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/changes$/, async (req, res, ctx, m) => {
+    json(res, 200, await changes(files, await sessionFolder(m[1])));
+  });
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/diff$/, async (req, res, ctx, m) => {
+    const d = await diff(files, await sessionFolder(m[1]), ctx.url.searchParams.get('path'));
+    audit(ctx.ip, 'diff_view', { sessionId: m[1], path: d.path });
+    json(res, 200, d);
   });
 
   // ---------- search (optional; on by default) ----------

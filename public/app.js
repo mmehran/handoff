@@ -471,15 +471,70 @@ function answerQuestionCard(card, text) {
   card.append(h('div', { class: 'q-status' }, 'Answered' + (m && m[1] ? ': ' + m[1].slice(0, 300) : '')));
 }
 
+// ---------- code colouring (small and dependency-free; enough to read code on a phone) ----------
+const HL_KEYWORDS = {
+  c: 'abstract as async await break case catch char class const continue default defer delete do double else enum export extends false final finally float for fn from func function go goto if impl implements import in instanceof int interface let long match mod mut namespace new nil null object of override package private protected pub public readonly return select self short static struct super switch synchronized this throw throws trait true try type typeof union unsafe use using val var void volatile when where while with yield',
+  py: 'and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return self True try while with yield',
+  sh: 'case do done elif else esac exit export fi for function if in local return set then until while echo cd source alias unset readonly declare true false null',
+  sql: 'select from where and or not insert into values update set delete create table index view drop alter add join left right inner outer on group by order having limit offset as distinct union all null is in like between case when then else end primary key foreign references default',
+  json: 'true false null'
+};
+const HL_LANG = {
+  js: 'c', mjs: 'c', cjs: 'c', jsx: 'c', ts: 'c', tsx: 'c', mts: 'c', cts: 'c', java: 'c', c: 'c', h: 'c', cc: 'c', cpp: 'c', hpp: 'c', cs: 'c', go: 'c', rs: 'c',
+  swift: 'c', kt: 'c', kts: 'c', scala: 'c', php: 'c', dart: 'c', groovy: 'c', jsonc: 'c', py: 'py', rb: 'sh', sh: 'sh', bash: 'sh', zsh: 'sh', ps1: 'sh', yml: 'sh',
+  yaml: 'sh', toml: 'sh', ini: 'sh', conf: 'sh', env: 'sh', dockerfile: 'sh', makefile: 'sh', r: 'sh', pl: 'sh', sql: 'sql', json: 'json', css: 'css', scss: 'css',
+  less: 'css', html: 'ml', htm: 'ml', xml: 'ml', svg: 'ml', vue: 'ml', svelte: 'ml'
+};
+// groups: 1 comment, 2 string, 3 number, 4 word (a keyword, tag or property); (?!) marks a group a language doesn't have
+const HL_RULES = {
+  c: /(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|(\b(?:0x[\da-f]+|\d[\d_]*(?:\.\d+)?(?:e[+-]?\d+)?)\b)|([A-Za-z_$][\w$]*)/gi,
+  py: /(#[^\n]*)|("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|(\b\d[\d_]*(?:\.\d+)?\b)|([A-Za-z_]\w*)/g,
+  sh: /(#[^\n]*)|("(?:[^"\\]|\\.)*"|'[^'\n]*')|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][\w-]*)/g,
+  sql: /(--[^\n]*|\/\*[\s\S]*?\*\/)|('(?:[^'\\]|\\.|'')*')|(\b\d+(?:\.\d+)?\b)|([A-Za-z_]\w*)/g,
+  json: /((?!))|("(?:[^"\\\n]|\\.)*")|(-?\b\d+(?:\.\d+)?(?:e[+-]?\d+)?\b)|([a-z]+)/gi,
+  css: /(\/\*[\s\S]*?\*\/)|("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|(#[\da-f]{3,8}\b|-?\b\d+(?:\.\d+)?(?:px|em|rem|%|vh|vw|s|ms|deg)?\b)|(@[\w-]+|[A-Za-z_-][\w-]*(?=\s*:))/gi,
+  ml: /(<!--[\s\S]*?-->)|("[^"\n]*"|'[^'\n]*')|((?!))|(<\/?[A-Za-z][\w:.-]*|\/?>)/g
+};
+function highlight(text, name) {
+  const lower = String(name).toLowerCase();
+  const lang = HL_LANG[lower.match(/\.([a-z0-9]+)$/)?.[1] || lower];
+  const frag = document.createDocumentFragment();
+  if (!lang || text.length > 300 * 1024) { frag.append(text); return frag; } // big files: plain text, still fast
+  const re = new RegExp(HL_RULES[lang].source, HL_RULES[lang].flags);
+  const kw = new Set((HL_KEYWORDS[lang] || '').split(' '));
+  const span = (cls, s) => { const e = document.createElement('span'); e.className = cls; e.textContent = s; return e; };
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    if (!m[0]) { re.lastIndex++; continue; }
+    const [all, com, str, num, word] = m;
+    let node = null;
+    if (com) node = span('hl-com', all);
+    else if (str) node = span(lang === 'json' && /^\s*:/.test(text.slice(re.lastIndex, re.lastIndex + 20)) ? 'hl-key' : 'hl-str', all);
+    else if (num) node = span('hl-num', all);
+    else if (word && lang === 'ml') node = span('hl-tag', all);
+    else if (word && lang === 'css') node = span('hl-key', all);
+    else if (word && kw.has(lang === 'sql' ? word.toLowerCase() : word)) node = span('hl-kw', all);
+    if (!node) continue; // a plain name stays part of the text between matches
+    if (m.index > last) frag.append(text.slice(last, m.index));
+    frag.append(node);
+    last = re.lastIndex;
+  }
+  frag.append(text.slice(last));
+  return frag;
+}
+
 // ---------- files (read-only browser of the session's folder, HANDOFF_FILE_BROWSER) ----------
 // What is open lives in the address (#/s/<id>?dir=src or ?file=src/app.js), so the phone's back
 // button steps back through folders and files.
 const fsize = b => (b < 1000 ? `${b} B` : size(b));
+const fileIcon = e => e.type === 'dir' ? '📁' : e.kind === 'image' ? '🖼️' : e.kind === 'other' ? '📦' : '📄';
 function filesPanel(id) {
-  const el = h('div', { class: 'files' });
+  const findBox = h('input', { type: 'search', class: 'find', placeholder: 'Find files by name…', 'aria-label': 'Find files by name' });
+  const body = h('div', { class: 'files' });
+  const el = h('div', {}, findBox, body);
   const url = (what, p) => `/api/sessions/${id}/${what}?path=${encodeURIComponent(p)}`;
   const link = (key, p) => `#/s/${id}?${key}=${encodeURIComponent(p)}`;
-  let lastDir = '', seq = 0;
+  let lastDir = '', seq = 0, current = new URLSearchParams('dir='), findTimer;
 
   const crumbs = (folder, rel) => {
     const parts = rel ? rel.split('/') : [];
@@ -496,14 +551,12 @@ function filesPanel(id) {
     const up = d.path.includes('/') ? d.path.slice(0, d.path.lastIndexOf('/')) : '';
     const rows = d.entries.map(e => {
       const p = d.path ? `${d.path}/${e.name}` : e.name;
-      const icon = e.type === 'dir' ? '📁' : e.kind === 'image' ? '🖼️' : e.kind === 'other' ? '📦' : '📄';
-      const kids = [h('span', { class: 'ficon' }, icon), h('span', { class: 'fname' }, e.name),
-        h('span', { class: 'fmeta' }, e.type === 'dir' ? '' : `${fsize(e.size)} · ${ago(e.mtime)}`)];
-      if (e.type === 'file' && e.kind === 'other') return h('div', { class: 'frow off', title: 'This file type can\'t be previewed' }, ...kids);
-      return h('a', { class: 'frow', href: link(e.type === 'dir' ? 'dir' : 'file', p) }, ...kids);
+      return h('a', { class: 'frow' + (e.kind === 'other' ? ' off' : ''), href: link(e.type === 'dir' ? 'dir' : 'file', p), title: e.kind === 'other' ? 'Can\'t be previewed, but can be downloaded' : null },
+        h('span', { class: 'ficon' }, fileIcon(e)), h('span', { class: 'fname' }, e.name),
+        h('span', { class: 'fmeta' }, e.type === 'dir' ? '' : `${fsize(e.size)} · ${ago(e.mtime)}`));
     });
     if (d.path) rows.unshift(h('a', { class: 'frow', href: link('dir', up) }, h('span', { class: 'ficon' }, '↩'), h('span', { class: 'fname' }, '..')));
-    el.replaceChildren(...[crumbs(d.folder, d.path),
+    body.replaceChildren(...[crumbs(d.folder, d.path),
       rows.length ? h('div', { class: 'flist' }, ...rows) : h('div', { class: 'empty' }, 'This folder is empty.'),
       d.truncated && h('div', { class: 'small muted' }, `Only the first ${d.entries.length} entries are shown.`)].filter(Boolean));
   };
@@ -512,38 +565,121 @@ function filesPanel(id) {
     const dir = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '';
     lastDir = dir;
     const tools = h('div', { class: 'row small muted' }, `${fsize(f.size)} · ${ago(f.mtime)}`, h('span', { class: 'grow' }));
-    let body;
+    let view;
     if (f.kind === 'image') {
-      body = f.tooLarge ? h('div', { class: 'empty' }, 'This image is too large to show here (over 20 MB).')
+      view = f.tooLarge ? h('div', { class: 'empty' }, 'This image is too large to show here (over 20 MB).')
         : h('div', { class: 'fimg' }, h('img', { src: url('raw', f.path), alt: f.name }));
       if (!f.tooLarge) tools.append(h('a', { class: 'btn', href: url('raw', f.path), target: '_blank', rel: 'noopener' }, 'Full size'));
     } else if (f.kind === 'other') {
-      body = h('div', { class: 'empty' }, 'This file can\'t be previewed. Only text, code and images are shown.');
+      view = h('div', { class: 'empty' }, 'This file can\'t be previewed (only text, code and images are shown), but you can download it.');
     } else {
       const lines = f.text.split('\n').length - (f.text.endsWith('\n') ? 1 : 0);
       tools.firstChild.textContent += ` · ${lines} line${lines === 1 ? '' : 's'}`;
-      body = h('div', { class: 'fcode' + (store.get('wrap', false) ? ' wrap' : '') },
-        h('pre', { class: 'gutter', 'aria-hidden': 'true', text: Array.from({ length: Math.max(lines, 1) }, (_, i) => i + 1).join('\n') }),
-        h('pre', { class: 'code', text: f.text }));
-      const wrap = h('button', { class: 'btn', onclick: () => { const on = body.classList.toggle('wrap'); store.set('wrap', on); wrap.textContent = on ? 'No wrap' : 'Wrap lines'; } },
-        body.classList.contains('wrap') ? 'No wrap' : 'Wrap lines');
-      tools.append(wrap);
+      const code = h('pre', { class: 'code' });
+      code.append(highlight(f.text, f.name));
+      const source = h('div', { class: 'fcode' + (store.get('wrap', false) ? ' wrap' : '') },
+        h('pre', { class: 'gutter', 'aria-hidden': 'true', text: Array.from({ length: Math.max(lines, 1) }, (_, i) => i + 1).join('\n') }), code);
+      const wrap = h('button', { class: 'btn', onclick: () => { const on = source.classList.toggle('wrap'); store.set('wrap', on); wrap.textContent = on ? 'No wrap' : 'Wrap lines'; } },
+        source.classList.contains('wrap') ? 'No wrap' : 'Wrap lines');
+      if (/\.(md|markdown|mdx)$/i.test(f.name)) {
+        // Markdown opens as a preview; Source shows the text with line numbers
+        const preview = h('div', { class: 'msg assistant md-preview' }, md(f.text));
+        view = h('div', {}, preview, source);
+        const set = on => { preview.hidden = !on; source.hidden = on; wrap.hidden = on; toggle.textContent = on ? 'Source' : 'Preview'; store.set('mdPreview', on); };
+        const toggle = h('button', { class: 'btn', onclick: () => set(preview.hidden) });
+        tools.append(toggle, wrap);
+        set(store.get('mdPreview', true));
+      } else {
+        view = source;
+        tools.append(wrap);
+      }
     }
-    el.replaceChildren(...[crumbs(f.folder, f.path), tools,
-      f.truncated && h('div', { class: 'notice' }, 'This file is large: only the first 1 MB is shown.'), body].filter(Boolean));
+    tools.append(h('a', { class: 'btn', href: url('download', f.path), download: f.name }, 'Download'));
+    body.replaceChildren(...[crumbs(f.folder, f.path), tools,
+      f.truncated && h('div', { class: 'notice' }, 'This file is large: only the first 1 MB is shown. Download it to see all of it.'), view].filter(Boolean));
   };
 
+  // Find by name anywhere in the project; while the box has text, its results replace the listing
+  const runFind = async () => {
+    const q = findBox.value.trim();
+    if (!q) return show(current);
+    const my = ++seq;
+    body.replaceChildren(h('div', { class: 'muted small' }, 'Searching…'));
+    try {
+      const d = await api('GET', `/api/sessions/${id}/find?q=${encodeURIComponent(q)}`);
+      if (my !== seq) return;
+      const terms = termsOf(q);
+      const rows = d.results.map(r => h('a', { class: 'frow' + (r.kind === 'other' ? ' off' : ''), href: link(r.type === 'dir' ? 'dir' : 'file', r.path) },
+        h('span', { class: 'ficon' }, fileIcon(r)), h('span', { class: 'fname mono' }, ...marked(r.path, terms))));
+      body.replaceChildren(...[
+        h('div', { class: 'small muted' }, `${d.results.length}${d.truncated ? '+' : ''} match${d.results.length === 1 ? '' : 'es'} in ${d.folder}`),
+        rows.length ? h('div', { class: 'flist' }, ...rows) : h('div', { class: 'empty' }, 'No file or folder name contains that.'),
+        d.truncated && h('div', { class: 'small muted' }, 'Stopped early: there are a lot of files. .git and node_modules are never searched.')].filter(Boolean));
+    } catch (x) { if (my === seq) body.replaceChildren(h('div', { class: 'empty' }, x.message)); }
+  };
+  findBox.addEventListener('input', () => { clearTimeout(findTimer); findTimer = setTimeout(runFind, 300); });
+
   const show = async params => {
+    current = params;
+    findBox.value = ''; // opening a folder or file (also from a find result) ends the search
     const my = ++seq; // ignore answers for a folder or file the user has already left
-    el.replaceChildren(h('div', { class: 'muted small' }, 'Loading…'));
+    body.replaceChildren(h('div', { class: 'muted small' }, 'Loading…'));
     try {
       if (params.has('file')) { const f = await api('GET', url('file', params.get('file'))); if (my === seq) renderFile(f); }
       else { const d = await api('GET', url('files', params.get('dir') || '')); if (my === seq) renderDir(d); }
     } catch (x) {
-      if (my === seq && x.message !== 'unauthorized') el.replaceChildren(h('div', { class: 'row' }, h('a', { class: 'btn', href: link('dir', '') }, 'Back to the top folder')), h('div', { class: 'empty' }, x.message));
+      if (my === seq && x.message !== 'unauthorized') body.replaceChildren(h('div', { class: 'row' }, h('a', { class: 'btn', href: link('dir', '') }, 'Back to the top folder')), h('div', { class: 'empty' }, x.message));
     }
   };
   return { el, show, lastDir: () => lastDir };
+}
+
+// ---------- changes (uncommitted git changes in the session's folder; read-only) ----------
+// #/s/<id>?changes= lists the changed files, ?diff=<path> shows one file's diff.
+function changesPanel(id) {
+  const el = h('div', { class: 'files' });
+  const link = (key, p) => `#/s/${id}?${key}=${encodeURIComponent(p)}`;
+  const BADGE = { modified: ['M', 'Modified'], added: ['A', 'Added'], deleted: ['D', 'Deleted'], renamed: ['R', 'Renamed'], untracked: ['N', 'New, not in git yet'], conflict: ['!', 'Merge conflict'] };
+  let seq = 0;
+
+  const renderList = d => {
+    if (!d.git) return el.replaceChildren(h('div', { class: 'empty' }, `Nothing to show: ${d.reason}.`));
+    const rows = d.files.map(f => h('a', { class: 'frow', href: link('diff', f.path) },
+      h('span', { class: `badge ${f.status}`, title: BADGE[f.status][1] }, BADGE[f.status][0]),
+      h('span', { class: 'fname mono' }, f.path), f.from ? h('span', { class: 'fmeta' }, `was ${f.from}`) : null));
+    el.replaceChildren(...[
+      h('div', { class: 'row small muted' }, `${d.branch ? `On ${d.branch} · ` : ''}${d.files.length}${d.truncated ? '+' : ''} file${d.files.length === 1 ? '' : 's'} changed since the last commit`,
+        h('span', { class: 'grow' }), h('button', { class: 'btn', onclick: () => show(new URLSearchParams('changes=')) }, 'Refresh')),
+      rows.length ? h('div', { class: 'flist' }, ...rows) : h('div', { class: 'empty' }, 'No uncommitted changes.'),
+      d.truncated && h('div', { class: 'small muted' }, 'Only the first 500 files are shown.')].filter(Boolean));
+  };
+
+  const renderDiff = d => {
+    const pre = h('pre', { class: 'diff' });
+    for (const line of d.diff.split('\n')) {
+      const cls = /^(diff |index |--- |\+\+\+ |new file|deleted file|similarity|rename |Binary )/.test(line) ? 'd-meta'
+        : line.startsWith('@@') ? 'd-hunk' : line.startsWith('+') ? 'd-add' : line.startsWith('-') ? 'd-del' : '';
+      const s = document.createElement('span'); // one block per line, so added/removed colour spans the whole line
+      s.className = cls || 'd-ctx'; s.textContent = line || ' '; pre.append(s);
+    }
+    el.replaceChildren(...[
+      h('div', { class: 'row' }, h('a', { class: 'btn', href: link('changes', '') }, '← All changes'), h('span', { class: 'grow mono small' }, d.path),
+        h('a', { class: 'btn', href: `#/s/${id}?file=${encodeURIComponent(d.path)}` }, 'Open file')),
+      d.truncated && h('div', { class: 'notice' }, 'This diff is large: only the first 1 MB is shown.'),
+      d.diff.trim() ? h('div', { class: 'fcode' }, pre) : h('div', { class: 'empty' }, 'No differences from the last commit.')].filter(Boolean));
+  };
+
+  const show = async params => {
+    const my = ++seq;
+    el.replaceChildren(h('div', { class: 'muted small' }, 'Loading…'));
+    try {
+      if (params.has('diff')) { const d = await api('GET', `/api/sessions/${id}/diff?path=${encodeURIComponent(params.get('diff'))}`); if (my === seq) renderDiff(d); }
+      else { const d = await api('GET', `/api/sessions/${id}/changes`); if (my === seq) renderList(d); }
+    } catch (x) {
+      if (my === seq && x.message !== 'unauthorized') el.replaceChildren(h('div', { class: 'row' }, h('a', { class: 'btn', href: link('changes', '') }, '← All changes')), h('div', { class: 'empty' }, x.message));
+    }
+  };
+  return { el, show };
 }
 
 async function sessionView(id, params = new URLSearchParams()) {
@@ -683,20 +819,24 @@ async function sessionView(id, params = new URLSearchParams()) {
   const composer = h('div', { class: 'composer' }, notice, ta, h('div', { class: 'row opts' }, ...picks.els, forkLabel, h('span', { class: 'grow spacer' }), send));
   const chat = h('div', { class: 'chat' }, findPanel, older, msgs, working, composer);
 
-  // Chat / Files tabs; Files only when the server has the file browser turned on
+  // Chat / Files / Changes tabs; Files and Changes only when the server has the file browser turned on
   const files = state.me.files ? filesPanel(id) : null;
+  const changes = state.me.files ? changesPanel(id) : null;
   const chatTab = h('button', { class: 'tab', role: 'tab', onclick: () => { location.hash = `#/s/${id}`; } }, 'Chat');
   const filesTab = h('button', { class: 'tab', role: 'tab', onclick: () => { location.hash = `#/s/${id}?dir=${encodeURIComponent(files.lastDir())}`; } }, 'Files');
+  const changesTab = h('button', { class: 'tab', role: 'tab', onclick: () => { location.hash = `#/s/${id}?changes=`; } }, 'Changes');
   const nav = p => {
-    const inFiles = !!files && (p.has('dir') || p.has('file'));
-    chat.hidden = inFiles;
-    if (files) files.el.hidden = !inFiles;
-    chatTab.classList.toggle('on', !inFiles); chatTab.setAttribute('aria-selected', String(!inFiles));
-    filesTab.classList.toggle('on', inFiles); filesTab.setAttribute('aria-selected', String(inFiles));
-    if (inFiles) { files.show(p); scrollTo(0, 0); } else if (p.has('find') && state.me.search) { openFind(p.get('find')); scrollTo(0, 0); } else scrollTo(0, document.body.scrollHeight);
+    const tab = files && (p.has('dir') || p.has('file')) ? 'files' : changes && (p.has('changes') || p.has('diff')) ? 'changes' : 'chat';
+    chat.hidden = tab !== 'chat';
+    if (files) { files.el.hidden = tab !== 'files'; changes.el.hidden = tab !== 'changes'; }
+    for (const [name, b] of [['chat', chatTab], ['files', filesTab], ['changes', changesTab]]) { b.classList.toggle('on', tab === name); b.setAttribute('aria-selected', String(tab === name)); }
+    if (tab === 'files') { files.show(p); scrollTo(0, 0); }
+    else if (tab === 'changes') { changes.show(p); scrollTo(0, 0); }
+    else if (p.has('find') && state.me.search) { openFind(p.get('find')); scrollTo(0, 0); }
+    else scrollTo(0, document.body.scrollHeight);
   };
 
-  view.replaceChildren(head, ...(files ? [h('div', { class: 'tabs', role: 'tablist' }, chatTab, filesTab), files.el] : []), chat);
+  view.replaceChildren(head, ...(files ? [h('div', { class: 'tabs', role: 'tablist' }, chatTab, filesTab, changesTab), files.el, changes.el] : []), chat);
   updateNotice();
   // moving between Chat, folders and files only changes the query part of the address: the router hands
   // those changes to nav() instead of rebuilding the page (the chat keeps its stream and scroll)

@@ -3,6 +3,7 @@
 // it can be listed or read. Handoff's own .env and data folder are never shown, even when a session
 // runs in the Handoff folder itself. Text is returned as JSON; images are streamed as they are.
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { httpErr } from './runner.js';
 
@@ -21,6 +22,8 @@ const UNSUPPORTED = new Set(('mp4 m4v mov avi mkv webm wmv flv mpg mpeg 3gp m2ts
 export const TEXT_MAX = 1024 * 1024;        // longer text files are cut off here
 export const IMAGE_MAX = 20 * 1024 * 1024;  // larger images aren't shown
 const LIST_MAX = 2000;                      // entries per folder
+export const DOWNLOAD_MAX = 100 * 1024 * 1024;
+const FIND_SKIP = new Set(['.git', 'node_modules']); // never searched by name: huge, and rarely what you want
 
 // 'image' | 'text' (a guess; confirmed when the file is opened) | 'other' (can't be previewed)
 export function kindOf(name) {
@@ -50,6 +53,50 @@ export class FileBrowser {
     if (!r || !fs.statSync(r).isDirectory()) throw httpErr(404, 'the project folder no longer exists');
     if (this.allowedRoots.length && !this.allowedRoots.some(a => within(r, a))) throw httpErr(403, 'this folder is outside the allowed folders');
     return r;
+  }
+
+  // Like resolve(), for a path that may no longer exist (a deleted file in the Changes tab):
+  // checked by its name, without following links.
+  check(cwd, rel = '') {
+    const root = this.root(cwd);
+    rel = String(rel ?? '').replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!rel || rel.includes('\0') || /^[a-zA-Z]:/.test(rel)) throw httpErr(400, 'bad path');
+    const abs = path.resolve(root, rel);
+    if (!within(abs, root)) throw httpErr(403, 'that is outside the project folder');
+    if (this.denied(real(abs) || abs)) throw httpErr(403, 'this file is hidden');
+    return { root, abs, rel: path.relative(root, abs).split(path.sep).join('/') };
+  }
+
+  // Files and folders whose name contains q, anywhere in the project, nearest first. Links are not
+  // followed, .git and node_modules are skipped, and the walk stops after `budget` entries.
+  async find(cwd, q, { limit = 200, budget = 30000 } = {}) {
+    const root = this.root(cwd);
+    const needle = String(q || '').toLowerCase().trim();
+    const results = [];
+    let seen = 0, truncated = false;
+    const queue = needle ? [''] : [];
+    while (queue.length && !truncated) {
+      const rel = queue.shift();
+      let entries = [];
+      try { entries = await fsp.readdir(path.join(root, rel), { withFileTypes: true }); } catch { continue; }
+      for (const d of entries) {
+        if (++seen > budget || results.length >= limit) { truncated = true; break; }
+        const child = rel ? `${rel}/${d.name}` : d.name;
+        if (d.isSymbolicLink() || this.denied(path.join(root, child))) continue;
+        const dir = d.isDirectory();
+        if (d.name.toLowerCase().includes(needle)) results.push(dir ? { path: child, type: 'dir' } : { path: child, type: 'file', kind: kindOf(d.name) });
+        if (dir && !FIND_SKIP.has(d.name)) queue.push(child);
+      }
+    }
+    return { folder: path.basename(root) || root, results, truncated };
+  }
+
+  download(cwd, rel) {
+    const { abs, rel: where } = this.resolve(cwd, rel);
+    const st = fs.statSync(abs);
+    if (!st.isFile()) throw httpErr(400, 'not a file');
+    if (st.size > DOWNLOAD_MAX) throw httpErr(413, 'file too large to download (over 100 MB)');
+    return { abs, path: where, name: path.basename(abs), size: st.size };
   }
 
   // rel: a path inside the folder, '/'-separated. Returns the real absolute path, checked.

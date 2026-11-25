@@ -48,7 +48,7 @@ The Cloudflare **API** token is never stored. `npm run setup:domain` reads it fr
 | `HANDOFF_ALLOWED_ROOTS` | empty | Only allow new sessions inside these folders, and only browse files inside them. Separator: `;` on Windows, `:` on macOS/Linux. Empty = any existing folder. |
 | `HANDOFF_SEARCH` | `true` | Full-text search across chats. Keeps a text-only index of prompts and replies in `data/search/` (about 1% of the transcripts' size). `false` turns search off. |
 | `HANDOFF_AUDIT_TEXT` | `true` | Record the first 200 characters of each prompt and typed answer in `data/audit.log`. `false` keeps only who did what and when. |
-| `HANDOFF_FILE_BROWSER` | `false` | Adds a **Files** tab to every session, to browse its project folder and open text, code and images (read-only). See [security](security.md#files-tab). |
+| `HANDOFF_FILE_BROWSER` | `false` | Adds **Files** and **Changes** tabs to every session: browse and search its project folder, open text, code (coloured) and images, download files, and see uncommitted git changes with diffs. All read-only. See [security](security.md#files-tab). |
 | `HANDOFF_MAX_RUNS` | `3` | Most Claude processes Handoff runs at once. |
 | `HANDOFF_IDLE_KILL_MINUTES` | `15` | Stop an idle process Handoff started. It resumes on the next message. |
 | `HANDOFF_PERMISSION_TIMEOUT_MINUTES` | `30` | Auto-deny a tool approval nobody answered. |

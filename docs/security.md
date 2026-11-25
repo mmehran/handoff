@@ -40,9 +40,11 @@ Off by default. With `HANDOFF_FILE_BROWSER=true`, every session gets a read-only
 - Anyone signed in can read **every file in that folder**, `.env` files included. That's no more than they could already ask Claude to show them, but only turn it on if that's fine for you.
 - Paths are resolved with symlinks and junctions followed, so nothing outside the session's folder can be listed or opened. Links that point outside it are left out of the listing.
 - Handoff's own `.env` and `data/` folder, Claude Code's `~/.claude/.credentials.json` and the session inbox tokens are never shown, even when a session runs in a folder that contains them.
-- Nothing can be changed, uploaded or deleted. Text is shown up to 1 MB and images up to 20 MB. Videos and binary files are listed but can't be opened.
+- Nothing can be changed, uploaded or deleted. Text is shown up to 1 MB and images up to 20 MB. Videos and binary files can't be previewed, only downloaded (up to 100 MB, served as an attachment with a sandboxing CSP).
+- Find by name doesn't follow links and never searches `.git` or `node_modules`.
+- The **Changes** tab runs `git status` and `git diff` in the folder: no shell, fixed arguments, and file paths go through the same checks as the Files tab. Files hidden from the Files tab are left out of it too.
 - Images are served with `Content-Security-Policy: default-src 'none'; sandbox`, so an SVG opened on its own can't run scripts on the site.
-- Every file opened is recorded in the audit log (`file_view`).
+- Every file opened, downloaded or diffed is recorded in the audit log (`file_view`, `file_download`, `diff_view`).
 - `HANDOFF_ALLOWED_ROOTS` limits the Files tab too.
 
 ## Search index
