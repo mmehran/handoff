@@ -501,9 +501,9 @@ function sameOrigin(req) {
   return allowed.includes(host);
 }
 
-// version: changes whenever the page's files do. index.html points at /app.js?v=<version> and
-// /style.css?v=<version>, so no cache in between (a CDN or the browser) can serve an old script or
-// stylesheet after an update, whatever its own caching rules: an update means new addresses.
+// version: changes whenever the page's files do. index.html points at /app.js?v=<version> (and the
+// same for /theme.js and /style.css), so no cache in between (a CDN or the browser) can serve an old
+// script or stylesheet after an update, whatever its own caching rules: an update means new addresses.
 function serveStatic(req, res, pathname, version) {
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }
   let rel = decodeURIComponent(pathname);
@@ -512,7 +512,7 @@ function serveStatic(req, res, pathname, version) {
   if (!file.startsWith(PUBLIC + path.sep)) { res.writeHead(403); return res.end(); }
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404); return res.end('not found'); }
-    if (rel === '/index.html') data = Buffer.from(String(data).replace(/(src|href)="\/(app\.js|style\.css)"/g, `$1="/$2?v=${version}"`));
+    if (rel === '/index.html') data = Buffer.from(String(data).replace(/(src|href)="\/(app\.js|theme\.js|style\.css)"/g, `$1="/$2?v=${version}"`));
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' }); // tiny files; always pick up updates
     res.end(req.method === 'HEAD' ? undefined : data);
   });

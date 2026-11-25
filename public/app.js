@@ -125,7 +125,32 @@ function inline(s) {
   return out;
 }
 
+// ---------- theme: the system's, or light / dark picked in the menu ----------
+// theme.js applies the saved choice before the page draws; this keeps it in step afterwards.
+const darkQuery = matchMedia('(prefers-color-scheme: dark)');
+function applyTheme(t = store.get('theme', 'system')) {
+  const root = document.documentElement;
+  if (t === 'light' || t === 'dark') root.dataset.theme = t; else delete root.dataset.theme;
+  const dark = t === 'dark' || (t !== 'light' && darkQuery.matches);
+  $('meta[name=theme-color]')?.setAttribute('content', dark ? '#171a20' : '#ffffff');
+}
+darkQuery.addEventListener?.('change', () => applyTheme());
+function themePicker() {
+  const cur = store.get('theme', 'system');
+  const seg = h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Theme' });
+  for (const [v, label] of [['system', 'Auto'], ['light', 'Light'], ['dark', 'Dark']]) {
+    const b = h('button', { type: 'button', role: 'radio', 'aria-checked': String(v === cur), class: v === cur ? 'on' : null, title: v === 'system' ? 'Follow the system setting' : null, onclick: () => {
+      store.set('theme', v); applyTheme(v);
+      for (const o of seg.children) { o.classList.toggle('on', o === b); o.setAttribute('aria-checked', String(o === b)); }
+    } }, label);
+    seg.append(b);
+  }
+  return seg;
+}
+
 // ---------- chrome ----------
+// the pinned chat header sits right under the top bar, whatever its height (notch, larger text)
+if ('ResizeObserver' in window) new ResizeObserver(() => document.documentElement.style.setProperty('--top-h', $('#topbar').offsetHeight + 'px')).observe($('#topbar'));
 function setTop(title, backHref) {
   $('#title').textContent = title;
   const b = $('#back');
@@ -134,23 +159,35 @@ function setTop(title, backHref) {
   $('#menu').hidden = !state.me;
 }
 
+// A sheet over the page: slides up from the bottom on a phone, a dialog in the middle on a wide
+// screen. Tapping outside it, × or Esc closes it. Returns its close function.
+function openSheet(title, ...body) {
+  const close = () => { overlay.remove(); removeEventListener('keydown', onKey); };
+  const onKey = e => { if (e.key === 'Escape') close(); };
+  const overlay = h('div', { class: 'overlay', onclick: e => { if (e.target === overlay) close(); } },
+    h('div', { class: 'ctx-sheet', role: 'dialog', 'aria-label': title },
+      h('div', { class: 'row' }, h('b', {}, title), h('span', { class: 'grow' }), h('button', { class: 'icon', 'aria-label': 'Close', onclick: () => close() }, '×')),
+      ...body));
+  document.body.append(overlay);
+  addEventListener('keydown', onKey);
+  overlay.querySelector('.ctx-sheet button, .ctx-sheet input')?.focus({ preventScroll: true });
+  return close;
+}
+
 $('#menu').addEventListener('click', () => {
-  const sheet = h('div', { class: 'list' },
-    h('button', { class: 'btn', onclick: () => { location.hash = '#/new'; close(); } }, '+ New session'),
-    state.me?.push ? h('button', { class: 'btn', onclick: () => { close(); showPushSettings(); } }, 'Phone notifications…') : null,
-    alertsOn() ? h('button', { class: 'btn', onclick: () => { close(); showAlertSettings(); } }, 'Alert settings…') : null,
-    h('button', { class: 'btn', onclick: async () => {
-      try { await api('POST', '/api/notify/test'); toast('Test WhatsApp message sent'); }
-      catch (x) { toast('WhatsApp: ' + x.message, 6000); }
-      close();
-    } }, 'Send test WhatsApp'),
-    h('button', { class: 'btn', onclick: async () => { await api('POST', '/api/logout'); location.reload(); } }, 'Sign out'),
-    h('button', { class: 'btn danger', onclick: async () => { if (confirm('Sign out every device?')) { await api('POST', '/api/logout-all'); location.reload(); } } }, 'Sign out all devices'),
-    h('button', { class: 'btn', onclick: () => close() }, 'Close'));
-  const wrap = h('div', { class: 'perm' }, sheet);
-  const ps = $('#perm-sheet');
-  ps.replaceChildren(wrap); ps.hidden = false; ps.dataset.kind = 'menu';
-  function close() { ps.dataset.kind = ''; renderPerms(); }
+  const close = openSheet('Menu',
+    h('div', { class: 'row menu-theme' }, h('span', { class: 'grow' }, 'Theme'), themePicker()),
+    h('div', { class: 'list menu' },
+      h('button', { class: 'btn', onclick: () => { close(); location.hash = '#/new'; } }, '＋ New session'),
+      state.me?.push ? h('button', { class: 'btn', onclick: () => { close(); showPushSettings(); } }, '🔔 Phone notifications…') : null,
+      alertsOn() ? h('button', { class: 'btn', onclick: () => { close(); showAlertSettings(); } }, '🔕 Alert settings…') : null,
+      state.me?.whatsapp?.enabled ? h('button', { class: 'btn', onclick: async () => {
+        close();
+        try { await api('POST', '/api/notify/test'); toast('Test WhatsApp message sent'); }
+        catch (x) { toast('WhatsApp: ' + x.message, 6000); }
+      } }, '💬 Send test WhatsApp') : null,
+      h('button', { class: 'btn', onclick: async () => { await api('POST', '/api/logout'); location.reload(); } }, '↪ Sign out'),
+      h('button', { class: 'btn danger', onclick: async () => { if (confirm('Sign out every device?')) { await api('POST', '/api/logout-all'); location.reload(); } } }, '⏻ Sign out all devices')));
 });
 
 // ---------- phone push notifications ----------
@@ -160,13 +197,7 @@ const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in win
 const pushRegistration = () => navigator.serviceWorker.register('/sw.js');
 async function showPushSettings() {
   const box = h('div', { class: 'list' }, h('div', { class: 'muted small' }, 'Loading…'));
-  const close = () => { overlay.remove(); removeEventListener('keydown', onKey); };
-  const onKey = e => { if (e.key === 'Escape') close(); };
-  const overlay = h('div', { class: 'overlay', onclick: e => { if (e.target === overlay) close(); } },
-    h('div', { class: 'ctx-sheet', role: 'dialog', 'aria-label': 'Phone notifications' },
-      h('div', { class: 'row' }, h('b', {}, 'Phone notifications'), h('span', { class: 'grow' }), h('button', { class: 'icon', 'aria-label': 'Close', onclick: close }, '×')), box));
-  document.body.append(overlay);
-  addEventListener('keydown', onKey);
+  openSheet('Phone notifications', box);
   const say = (...kids) => box.replaceChildren(...kids);
   const render = async () => {
     if (!pushSupported()) {
@@ -217,13 +248,7 @@ const alertsOn = () => !!(state.me?.whatsapp?.enabled || state.me?.push);
 const sameDir = (a, b) => String(a).toLowerCase() === String(b).toLowerCase(); // the server compares case-insensitively on Windows
 async function showAlertSettings() {
   const box = h('div', { class: 'list' }, h('div', { class: 'muted small' }, 'Loading…'));
-  const close = () => { overlay.remove(); removeEventListener('keydown', onKey); };
-  const onKey = e => { if (e.key === 'Escape') close(); };
-  const overlay = h('div', { class: 'overlay', onclick: e => { if (e.target === overlay) close(); } },
-    h('div', { class: 'ctx-sheet', role: 'dialog', 'aria-label': 'WhatsApp alerts' },
-      h('div', { class: 'row' }, h('b', {}, 'Alert settings'), h('span', { class: 'grow' }), h('button', { class: 'icon', 'aria-label': 'Close', onclick: close }, '×')), box));
-  document.body.append(overlay);
-  addEventListener('keydown', onKey);
+  const close = openSheet('Alert settings', box);
   const render = pr => {
     const names = new Map(state.projects.map(p => [p.cwd.toLowerCase(), p.name]));
     box.replaceChildren(
@@ -356,7 +381,6 @@ function renderPerms() {
   const ps = $('#perm-sheet');
   const items = [...state.perms.values()];
   const ids = items.map(p => p.id).join(',');
-  if (ps.dataset.kind === 'menu') return; // the menu is open; approvals show again when it closes
   if (ids === renderPerms.shown && ps.dataset.kind === 'perms') return; // unchanged: keep buttons stable under the finger
   renderPerms.shown = ids;
   ps.dataset.kind = 'perms';
@@ -446,11 +470,12 @@ function photoPicker() {
   const input = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
   const strip = h('div', { class: 'photos', hidden: true });
   const button = h('button', { class: 'btn photo-btn', type: 'button', title: 'Attach photos', 'aria-label': 'Attach photos', onclick: () => input.click() }, '📷');
+  const badge = n => n ? h('span', { class: 'count' }, n) : null;
   const render = () => {
     strip.hidden = !photos.length;
     strip.replaceChildren(...photos.map((p, i) => h('div', { class: 'photo' }, h('img', { src: p.preview, alt: 'Photo to send' }),
       h('button', { class: 'icon', type: 'button', 'aria-label': 'Remove this photo', onclick: () => { photos.splice(i, 1); render(); } }, '×'))));
-    button.textContent = photos.length ? `📷 ${photos.length}` : '📷';
+    button.replaceChildren('📷', ...[badge(photos.length)].filter(Boolean));
   };
   input.addEventListener('change', async () => {
     for (const f of [...input.files]) {
@@ -548,17 +573,17 @@ async function projectView(key) {
   const list = h('div', { class: 'list' }, h('div', { class: 'muted small' }, 'Loading…'));
   // WhatsApp alerts can be muted per project (kept on the server)
   let muted = false;
-  const muteBtn = state.me.whatsapp?.enabled && p.cwd ? h('button', { class: 'btn', onclick: async () => {
+  const muteBtn = alertsOn() && p.cwd ? h('button', { class: 'btn', onclick: async () => {
     try {
       await api('POST', '/api/notify/mute', { cwd: p.cwd, muted: !muted });
       muted = !muted; label();
-      toast(muted ? 'WhatsApp alerts muted for this project' : 'WhatsApp alerts are on again for this project');
+      toast(muted ? 'Alerts muted for this project' : 'Alerts are on again for this project');
     } catch (x) { toast(x.message); }
   } }) : null;
   const label = () => { muteBtn.textContent = muted ? '🔔 Unmute alerts' : '🔕 Mute alerts'; };
   if (muteBtn) { label(); api('GET', '/api/notify/prefs').then(pr => { muted = pr.muted.some(c => sameDir(c, p.cwd)); label(); }).catch(() => {}); }
   view.replaceChildren(
-    h('div', { class: 'session-head' }, h('div', { class: 'mono' }, p.cwd),
+    h('div', { class: 'page-head' }, h('div', { class: 'mono muted' }, p.cwd),
       h('div', { class: 'row' }, h('a', { class: 'btn primary', href: `#/new?cwd=${encodeURIComponent(p.cwd)}` }, '+ New session here'), muteBtn)),
     h('h2', {}, 'Sessions'), list);
   const sessions = await api('GET', `/api/projects/${encodeURIComponent(key)}/sessions`);
@@ -839,9 +864,9 @@ async function sessionView(id, params = new URLSearchParams()) {
   setTop(info.title || 'Session', info.projectKey ? `#/p/${encodeURIComponent(info.projectKey)}` : '#/');
 
   const status = h('span', { class: 'chip' });
-  const settings = h('div', { class: 'small muted' });
-  const stopBtn = h('button', { class: 'btn danger', hidden: true, onclick: async () => { await api('POST', `/api/sessions/${id}/stop`); toast('Stopped'); } }, 'Stop');
-  const intBtn = h('button', { class: 'btn', hidden: true, onclick: async () => { await api('POST', `/api/sessions/${id}/interrupt`); toast('Interrupt sent'); } }, 'Interrupt');
+  const settings = h('div', { class: 'settings' });
+  const stopBtn = h('button', { class: 'btn sm danger', hidden: true, title: 'End this run', onclick: async () => { await api('POST', `/api/sessions/${id}/stop`); toast('Stopped'); } }, 'Stop');
+  const intBtn = h('button', { class: 'btn sm', hidden: true, title: 'Stop what Claude is doing now; the session stays open', onclick: async () => { await api('POST', `/api/sessions/${id}/interrupt`); toast('Interrupt sent'); } }, 'Interrupt');
   // search inside this chat (the whole transcript, not only what's loaded)
   const findBox = h('input', { type: 'search', class: 'find', placeholder: 'Search this chat…', 'aria-label': 'Search this chat' });
   const findList = h('div', { class: 'list' });
@@ -864,27 +889,31 @@ async function sessionView(id, params = new URLSearchParams()) {
   };
   findBox.addEventListener('input', () => { clearTimeout(findTimer); findTimer = setTimeout(runFind, 350); });
   const openFind = q => { findPanel.hidden = false; if (q != null && q !== findBox.value) { findBox.value = q; runFind(); } findBox.focus({ preventScroll: true }); };
-  const findBtn = state.me.search ? h('button', { class: 'btn', onclick: () => { if (findPanel.hidden) { openFind(); scrollTo(0, 0); } else findPanel.hidden = true; } }, 'Search') : null;
+  const findBtn = state.me.search ? h('button', { class: 'icon', title: 'Search this chat', 'aria-label': 'Search this chat', onclick: () => { if (chat.hidden) location.hash = `#/s/${id}`; if (findPanel.hidden) { openFind(); scrollTo(0, 0); } else findPanel.hidden = true; } }, '🔍') : null;
   // alerts for this chat only (WhatsApp and phone notifications)
   let chatMuted = false;
-  const muteBtn = alertsOn() ? h('button', { class: 'btn', onclick: async () => {
+  const muteBtn = alertsOn() ? h('button', { class: 'icon', onclick: async () => {
     try { await api('POST', '/api/notify/mute-session', { sessionId: id, muted: !chatMuted }); chatMuted = !chatMuted; muteLabel(); toast(chatMuted ? 'Alerts muted for this chat' : 'Alerts are on again for this chat'); }
     catch (x) { toast(x.message); }
   } }) : null;
-  const muteLabel = () => { muteBtn.textContent = chatMuted ? '🔔 Unmute alerts' : '🔕 Mute alerts'; muteBtn.title = chatMuted ? 'Alerts for this chat are off' : 'Stop alerts for this chat only'; };
+  const muteLabel = () => {
+    muteBtn.textContent = chatMuted ? '🔕' : '🔔';
+    muteBtn.title = chatMuted ? 'Alerts for this chat are muted. Tap to turn them on again' : 'Alerts are on for this chat. Tap to mute this chat only';
+    muteBtn.setAttribute('aria-label', muteBtn.title); muteBtn.setAttribute('aria-pressed', String(chatMuted));
+  };
   if (muteBtn) { muteLabel(); api('GET', '/api/notify/prefs').then(pr => { chatMuted = pr.mutedSessions.includes(id); muteLabel(); }).catch(() => {}); }
+  // pinned under the top bar, so status, actions and tabs stay in reach however far the chat scrolls
   const head = h('div', { class: 'session-head' },
-    h('div', { class: 'row' }, h('div', { class: 'grow mono' }, info.cwd || ''), status),
-    settings,
-    h('div', { class: 'row' }, findBtn, muteBtn, intBtn, stopBtn));
+    h('div', { class: 'session-bar' }, status, h('div', { class: 'cwd mono', title: info.cwd || '' }, h('span', { dir: 'ltr' }, info.cwd || '')), findBtn, muteBtn, intBtn, stopBtn),
+    settings);
   const msgs = h('div', { id: 'msgs' });
   const working = h('div', { class: 'working', hidden: true }, h('span', { class: 'spinner' }), h('span', { class: 'wtext' }, 'Claude is working…'));
   const older = h('button', { class: 'btn', hidden: true }, 'Load older messages');
 
   // composer
-  const ta = h('textarea', { rows: '2', placeholder: 'Message Claude…', enterkeyhint: 'send' });
+  const ta = h('textarea', { rows: '1', placeholder: 'Message Claude…', enterkeyhint: 'send', 'aria-label': 'Message' });
   const picks = makePickers(info.run ? { model: info.run.model, effort: info.run.effort, mode: info.run.mode } : {});
-  const send = h('button', { class: 'btn primary' }, 'Send');
+  const send = h('button', { class: 'btn primary send', title: 'Send (Ctrl+Enter)', 'aria-label': 'Send' }, '↑');
   const notice = h('div', { class: 'notice', hidden: true });
   const forkBox = h('input', { type: 'checkbox', id: 'fork' });
   const forkLabel = h('label', { for: 'fork', class: 'small muted row' }, forkBox, 'Fork');
@@ -897,7 +926,11 @@ async function sessionView(id, params = new URLSearchParams()) {
       return;
     }
     if (forkBox.checked) notice.textContent = 'Fork: continues this conversation in a new session; the original is left as is.';
-    else if (isLive()) notice.textContent = `Live in ${info.live.entrypoint === 'claude-desktop' ? 'Claude Desktop' : 'a terminal'}: your message goes straight into that session and shows on the laptop. Model, effort, mode and tool approvals stay as set on the laptop.`;
+    else if (isLive()) {
+      notice.textContent = `Live in ${info.live.entrypoint === 'claude-desktop' ? 'Claude Desktop' : 'a terminal'}: messages go straight into it.`;
+      notice.title = 'Your message shows on the laptop. Model, effort, mode and tool approvals stay as set there.';
+    }
+    notice.classList.toggle('live', isLive() && !forkBox.checked && !info.question);
     for (const el of picks.els) el.classList.toggle('off', isLive()); // the running laptop session keeps its own settings
   };
   forkBox.addEventListener('change', updateNotice);
@@ -947,7 +980,17 @@ async function sessionView(id, params = new URLSearchParams()) {
     if (!nodes.length) return;
     if (atTop) msgs.prepend(...nodes); else { msgs.append(...nodes); for (const p of pending) msgs.append(p.el); }
     if (stick && !chat.hidden) scrollTo(0, document.body.scrollHeight);
+    else if (!atTop && !chat.hidden) { jump.textContent = '↓ New messages'; jump.hidden = false; }
   };
+  // reading further up: a button back to the newest message (it says so when new ones came in)
+  const jump = h('button', { class: 'btn sm jump', hidden: true, onclick: () => scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }) }, '↓ Latest');
+  const onScroll = () => {
+    if (chat.hidden) return;
+    if (nearBottom()) { jump.hidden = true; jump.textContent = '↓ Latest'; }
+    else if (innerHeight + scrollY < document.body.scrollHeight - innerHeight * 1.5) jump.hidden = false;
+  };
+  addEventListener('scroll', onScroll, { passive: true });
+  state.cleanup.push(() => removeEventListener('scroll', onScroll));
 
   const photos = photoPicker();
   const doSend = async () => {
@@ -976,8 +1019,10 @@ async function sessionView(id, params = new URLSearchParams()) {
   send.addEventListener('click', doSend);
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doSend(); } });
   ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, innerHeight * 0.4) + 'px'; });
-  const composer = h('div', { class: 'composer' }, notice, photos.strip, ta, photos.input, h('div', { class: 'row opts' }, ...picks.els, forkLabel, h('span', { class: 'grow spacer' }), photos.button, send));
-  const chat = h('div', { class: 'chat' }, findPanel, older, msgs, working, composer);
+  const composer = h('div', { class: 'composer' }, notice, photos.strip, photos.input,
+    h('div', { class: 'input-row' }, photos.button, ta, send),
+    h('div', { class: 'opts' }, ...picks.els, forkLabel));
+  const chat = h('div', { class: 'chat' }, findPanel, older, msgs, working, jump, composer);
 
   // Chat / Files / Changes tabs; Files and Changes only when the server has the file browser turned on
   const files = state.me.files ? filesPanel(id) : null;
@@ -988,6 +1033,7 @@ async function sessionView(id, params = new URLSearchParams()) {
   const nav = p => {
     const tab = files && (p.has('dir') || p.has('file')) ? 'files' : changes && (p.has('changes') || p.has('diff')) ? 'changes' : 'chat';
     chat.hidden = tab !== 'chat';
+    if (chat.hidden) jump.hidden = true;
     if (files) { files.el.hidden = tab !== 'files'; changes.el.hidden = tab !== 'changes'; }
     for (const [name, b] of [['chat', chatTab], ['files', filesTab], ['changes', changesTab]]) { b.classList.toggle('on', tab === name); b.setAttribute('aria-selected', String(tab === name)); }
     if (tab === 'files') { files.show(p); scrollTo(0, 0); }
@@ -996,7 +1042,8 @@ async function sessionView(id, params = new URLSearchParams()) {
     else scrollTo(0, document.body.scrollHeight);
   };
 
-  view.replaceChildren(head, ...(files ? [h('div', { class: 'tabs', role: 'tablist' }, chatTab, filesTab, changesTab), files.el, changes.el] : []), chat);
+  if (files) head.append(h('div', { class: 'tabs', role: 'tablist' }, chatTab, filesTab, changesTab));
+  view.replaceChildren(head, ...(files ? [files.el, changes.el] : []), chat);
   updateNotice();
   // moving between Chat, folders and files only changes the query part of the address: the router hands
   // those changes to nav() instead of rebuilding the page (the chat keeps its stream and scroll)

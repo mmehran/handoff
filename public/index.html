@@ -3,12 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-  <meta name="theme-color" content="#14161a">
+  <meta name="theme-color" content="#171a20">
+  <meta name="color-scheme" content="light dark">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>Handoff</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icon-192.png">
+  <script src="/theme.js"></script>
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
 </head>
@@ -20,7 +23,10 @@
     <button id="menu" class="icon" aria-label="Menu" hidden>&#8942;</button>
   </header>
   <div id="banner" role="status" hidden></div>
-  <main id="view"></main>
+  <div id="shell">
+    <aside id="side" aria-label="Sessions and projects"></aside>
+    <main id="view"></main>
+  </div>
   <div id="perm-sheet" hidden></div>
   <div id="toast" hidden></div>
 </body>
