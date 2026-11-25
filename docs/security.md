@@ -47,6 +47,23 @@ Off by default. With `HANDOFF_FILE_BROWSER=true`, every session gets a read-only
 - Every file opened, downloaded or diffed is recorded in the audit log (`file_view`, `file_download`, `diff_view`).
 - `HANDOFF_ALLOWED_ROOTS` limits the Files tab too.
 
+## Git from the Changes tab
+
+On by default when the Changes tab is on; `HANDOFF_GIT_ACTIONS=false` turns it off.
+
+- **Commit** commits only the files the Changes tab lists and you ticked: hidden files (`.env` and the like) and anything outside the session's folder can't be picked. Paths reach git as literal pathspecs on standard input, never as arguments it could read as options. The message goes through a temporary file.
+- **Write with Claude** sends the diff of the ticked files (cut down to about 40 KB) to a one-off `claude -p` call with no tools, no settings files or hooks (`--restricted` where Claude Code supports it) and nothing saved as a chat.
+- **Push** uses the laptop's own git and the sign-in it has saved. git is told never to ask for a password or open a sign-in window, so a push that would need one fails with a message instead of hanging. Handoff never sees or stores git credentials, and the pull request link is read from the hosting site's own reply.
+- **Discard** keeps a copy of the file first in `data/discarded` (removed after 30 days), then puts it back as it was at the last commit, or deletes it if it is new. Files with merge conflicts are left alone.
+- **Worktrees** are made with `git worktree add` under `<project>/.claude/worktrees/<name>` on a new branch, from the last commit; `.claude/worktrees/` goes in the repository's `.git/info/exclude` (never committed). Removing one refuses while its session runs or while it has uncommitted changes, and keeps the branch.
+- Every commit, push, discard and worktree removal is in the audit log (`git_commit`, `git_push`, `git_discard`, `worktree_remove`).
+
+## New session folder picker
+
+- Lists folders only, never files, starting from the home folder and the drives. With `HANDOFF_ALLOWED_ROOTS` set it starts from those folders and lists nothing outside them.
+- Folder names that start with `.` or `$`, and system folders like `System Volume Information`, are left out.
+- **New folder** makes one folder (with an optional `git init`) inside the folder you are in; names with path separators, `..` or Windows' reserved names are refused. It is in the audit log as `folder_create`.
+
 ## Phone notifications
 
 - Handoff signs each push with its own key pair (VAPID, RFC 8292), made on first start and kept in `data/push-keys.json`.

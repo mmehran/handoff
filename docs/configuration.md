@@ -50,7 +50,8 @@ The Cloudflare **API** token is never stored. `npm run setup:domain` reads it fr
 | `HANDOFF_PUSH_CONTACT` | `https://<public hostname>` | Contact (`mailto:` or `https:` URL) given to the browsers' push services with each message, as Web Push requires. |
 | `HANDOFF_SEARCH` | `true` | Full-text search across chats. Keeps a text-only index of prompts and replies in `data/search/` (about 1% of the transcripts' size). `false` turns search off. |
 | `HANDOFF_AUDIT_TEXT` | `true` | Record the first 200 characters of each prompt and typed answer in `data/audit.log`. `false` keeps only who did what and when. |
-| `HANDOFF_FILE_BROWSER` | `false` | Adds **Files** and **Changes** tabs to every session: browse and search its project folder, open text, code (coloured) and images, download files, and see uncommitted git changes with diffs. All read-only. See [security](security.md#files-tab). |
+| `HANDOFF_FILE_BROWSER` | `false` | Adds **Files** and **Changes** tabs to every session: browse and search its project folder, open text, code (coloured) and images, download files, and see uncommitted git changes with diffs. The Files tab is read-only. See [security](security.md#files-tab). |
+| `HANDOFF_GIT_ACTIONS` | `true` | In the Changes tab: commit (Claude can write the message), push and discard one file's changes; and new sessions in their own git worktree. `false` = the Changes tab only shows what changed, and no worktrees. See [security](security.md#git-from-the-changes-tab). |
 | `HANDOFF_MAX_RUNS` | `3` | Most Claude processes Handoff runs at once. |
 | `HANDOFF_IDLE_KILL_MINUTES` | `15` | Stop an idle process Handoff started. It resumes on the next message. |
 | `HANDOFF_PERMISSION_TIMEOUT_MINUTES` | `30` | Auto-deny a tool approval nobody answered. |

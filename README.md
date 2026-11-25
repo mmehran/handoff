@@ -26,7 +26,8 @@ It's a small Node.js server with no npm dependencies. It listens on `127.0.0.1` 
 - **Send prompts anywhere:**
   - type into a session that's open on your computer and it appears there in real time
   - continue an old session in place, or fork it
-  - start a new session in any folder
+  - start a new session in any folder: type it, tap a recent one, or browse the computer's drives and folders (and make a new folder for a new project)
+  - start it in its own git worktree, so sessions on one project don't edit the same files
 - **Same choices as Claude Desktop.** The model list comes from your installed Claude Code, with each model's effort levels and the permission modes (Ask, Accept edits, Plan, Auto; Bypass only if you allow it).
 - **Attach photos.** Snap a screenshot or photo on your phone and send it with your prompt (up to 4, scaled down on the phone first).
 - **Approve tools from your phone.** Requests like "Allow Bash: npm test?" pop up with Allow and Deny buttons, in the app or right on the notification.
@@ -37,7 +38,9 @@ It's a small Node.js server with no npm dependencies. It listens on `127.0.0.1` 
 - **Quick replies.** "Continue", "Yes, go ahead", "Run the tests" and your own, one tap each, while Claude is waiting for you.
 - **Readable answers.** Tables, lists, links and code blocks (coloured, with a Copy button) show properly on a phone.
 - **Browse the project's files (optional).** A Files tab in every session shows its folder: find files by name, read code with colouring, preview Markdown, view images and download any file.
-- **See what Claude changed (optional).** A Changes tab lists the project's uncommitted git changes and shows each file's diff. Both tabs are read-only and off until you set `HANDOFF_FILE_BROWSER=true`.
+- **See what Claude changed (optional).** A Changes tab lists the project's uncommitted git changes and shows each file's diff, with line numbers. Both tabs are off until you set `HANDOFF_FILE_BROWSER=true`.
+- **Commit and push from your phone.** Tick the files, write a commit message or let Claude write it, commit, then push; the hosting site's pull request link opens with a tap. Discard one file's changes if Claude got it wrong (a copy is kept for 30 days). `HANDOFF_GIT_ACTIONS=false` keeps the Changes tab look-only.
+- **Comment on the diff.** Tap any line to leave Claude a comment, the way you would in a code review, then send them all at once. Claude gets each comment with its file, line and code.
 - **Search every chat.** One search box finds words in all your prompts and Claude's replies, across every project; each session can be searched on its own, and a hit opens in context.
 - **Remember me.** Tick it when you sign in on your own phone and it stays signed in for 30 days.
 - **Phone notifications.** Turn them on per device from the ⋮ menu and get the same alerts as notifications, even with the app closed. No WhatsApp, no account, nothing extra to install (on iPhone, add Handoff to the Home Screen first).

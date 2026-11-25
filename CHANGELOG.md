@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.0 (2026-11-26)
+
+### Added
+- **Commit and push from the Changes tab**: tick the files, write the message or let Claude write it (a quick one-off call: no tools, nothing saved as a chat), commit just those files, and push. A branch without an upstream gets one, and the pull request link the hosting site prints is shown.
+- **Discard one file's changes** from its diff, after a confirm. A copy of the file is kept in `data/discarded` for 30 days.
+- **Comments on diff lines**: the diff has line numbers; tap a line to comment, then send every comment to Claude as one message with the file, line and code of each.
+- **Folder picker** on the New session page: the home folder and every drive (or only `HANDOFF_ALLOWED_ROOTS`), git projects marked, and a new folder (optionally a new git repository) for a new project. Recent project folders are one tap away.
+- **Sessions in their own git worktree**: a new folder and branch (`handoff/<name>`) under `.claude/worktrees`, made from the last commit and kept out of the main checkout's git status. Remove the worktree from its Changes tab once its work is committed; the branch stays.
+- `HANDOFF_GIT_ACTIONS` (on by default) turns commit, push, discard and worktrees off.
+
+### Changed
+- Worktree projects are named "project · worktree" in the lists.
+- On phones, the file path sits on its own line above a diff.
+
 ## 1.2.0 (2026-11-25)
 
 ### Added
