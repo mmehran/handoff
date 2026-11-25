@@ -16,6 +16,7 @@ import { changes, diff, commit as gitCommit, push as gitPush, discard as gitDisc
 import { parseImages, saveForLiveSession } from './attachments.js';
 import { PushService } from './push.js';
 import { Activity } from './activity.js';
+import { FolderPicker } from './folders.js';
 
 const PUBLIC = path.join(ROOT, 'public');
 const COOKIE = 'handoff_sid';
@@ -425,6 +426,19 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
   });
 
   // ---------- control ----------
+  // the New session page's folder picker: drives (or the allowed folders), the folders in a folder, a new folder
+  const folderPicker = new FolderPicker({ allowedRoots: cfg.allowedRoots });
+  route('GET', /^\/api\/folders$/, (req, res, ctx) => {
+    const p = ctx.url.searchParams.get('path');
+    json(res, 200, p ? folderPicker.list(p) : { path: null, roots: folderPicker.roots() });
+  });
+  route('POST', /^\/api\/folders$/, async (req, res, ctx) => {
+    const b = await readJson(req);
+    const r = await folderPicker.make(b.parent, b.name, { git: !!b.git });
+    audit(ctx.ip, 'folder_create', { path: r.path, git: r.git });
+    json(res, 200, r);
+  });
+
   route('POST', /^\/api\/sessions\/new$/, async (req, res, ctx) => {
     const b = await readJson(req, BODY_WITH_PHOTOS);
     const images = parseImages(b.images);

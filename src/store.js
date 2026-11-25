@@ -437,6 +437,9 @@ function isAlive(pid) {
 
 function projectName(cwd) {
   if (/scratch-workspaces/i.test(cwd)) return 'Desktop scratch · ' + cwd.split(/[\\/]/).pop();
+  // a git worktree under <project>/.claude/worktrees/<name> (Handoff's or Claude Code's own)
+  const wt = cwd.match(/([^\\/]+)[\\/]\.claude[\\/]worktrees[\\/]([^\\/]+)[\\/]?$/);
+  if (wt) return `${wt[1]} · ${wt[2]}`;
   return cwd.split(/[\\/]/).filter(Boolean).pop() || cwd;
 }
 

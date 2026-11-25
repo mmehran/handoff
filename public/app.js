@@ -1090,7 +1090,7 @@ function changesPanel(id) {
     const notes = loadNotes(id).filter(n => n.path === f.path).length;
     return [h('span', { class: `badge ${f.status}`, title: BADGE[f.status][1] }, BADGE[f.status][0]),
       h('span', { class: 'fname mono' }, f.path), f.from ? h('span', { class: 'fmeta' }, `was ${f.from}`) : null,
-      notes ? h('span', { class: 'fmeta', title: `${plural(notes, 'comment')} for Claude` }, `💬 ${notes}`) : null];
+      notes ? h('span', { class: 'fmeta keep', title: `${plural(notes, 'comment')} for Claude` }, `💬 ${notes}`) : null];
   };
 
   // all comments in this chat, reviewed and sent to Claude as one message
@@ -1155,11 +1155,11 @@ function changesPanel(id) {
     const out = h('div', { class: 'small muted' });
     const rm = !gitOn || d.files.length ? null : h('button', { class: 'btn danger sm', onclick: () => confirmSheet('Remove this worktree?', [
       `The folder .claude/worktrees/${d.worktree} is deleted. The branch ${d.branch} and its commits stay, so nothing committed is lost.`,
-      d.ahead > 0 ? `Its ${plural(d.ahead, 'commit')} ${d.ahead === 1 ? "isn't" : "aren't"} pushed yet: they stay on the branch on the laptop.` : null].filter(Boolean),
+      d.ahead === 1 ? "Its commit isn't pushed yet; it stays on the branch, on the laptop." : d.ahead > 1 ? `Its ${d.ahead} commits aren't pushed yet; they stay on the branch, on the laptop.` : null].filter(Boolean),
     'Remove', async () => {
       const r = await api('POST', `/api/sessions/${id}/worktree/remove`);
       toast(`Removed the worktree; the branch ${r.branch || d.branch} is kept`, 5000);
-      refresh();
+      el.replaceChildren(h('div', { class: 'empty' }, `This session's worktree is removed. Its work is on the branch ${r.branch || d.branch}.`));
     }) }, 'Remove worktree');
     return h('div', { class: 'card git-card' },
       h('div', { class: 'row' }, h('span', { class: 'grow' }, '🌿 Its own worktree ', h('b', {}, d.worktree), ' on ', h('code', {}, d.branch)), rm),
@@ -1798,24 +1798,117 @@ async function sessionView(id, params = new URLSearchParams()) {
   state.cleanup.push(() => { gone = true; es?.close(); clearTimeout(fallback); clearTimeout(retry); clearInterval(pollTimer); window.removeEventListener('handoff-resume', onResume); });
 }
 
+// ---------- folder picker (New session) ----------
+// The laptop's drives and folders (or only HANDOFF_ALLOWED_ROOTS), git projects marked with 🌿, and a new
+// folder (optionally a new git repository) for a new project.
+function pickFolder(start, onPick) {
+  const list = h('div', { class: 'flist folder-list' });
+  const where = h('div', { class: 'grow mono small folder-where' });
+  const err = h('div', { class: 'err' });
+  const use = h('button', { class: 'btn primary' }, 'Use this folder');
+  const up = h('button', { class: 'btn sm', 'aria-label': 'Up one folder' }, '↑ Up');
+  const newBtn = h('button', { class: 'btn' }, '＋ New folder');
+  const name = h('input', { type: 'text', placeholder: 'Name of the new folder', 'aria-label': 'Name of the new folder', autocapitalize: 'off' });
+  const gitBox = h('input', { type: 'checkbox' });
+  gitBox.checked = true;
+  const create = h('button', { class: 'btn primary sm' }, 'Create');
+  const form = h('div', { class: 'list new-folder' }, name, h('div', { class: 'row' }, h('label', { class: 'row small grow' }, gitBox, 'Start a git repository in it'), create));
+  form.hidden = true;
+  let cur = null, seq = 0;
+  const row = (icon, label, meta, onclick) => h('button', { class: 'frow', onclick },
+    h('span', { class: 'ficon' }, icon), h('span', { class: 'fname' }, label), meta ? h('span', { class: meta === 'git' ? 'fmeta keep' : 'fmeta' }, meta) : null);
+  const open = async p => {
+    const my = ++seq;
+    err.textContent = '';
+    try {
+      const d = await api('GET', '/api/folders' + (p ? `?path=${encodeURIComponent(p)}` : ''));
+      if (my !== seq) return;
+      cur = d;
+      if (!d.path) {
+        where.textContent = 'This computer';
+        list.replaceChildren(...d.roots.map(r => row(r.kind === 'home' ? '🏠' : r.kind === 'drive' ? '💽' : r.git ? '🌿' : '📁', r.name,
+          r.kind === 'home' ? r.path : r.git ? 'git' : '', () => open(r.path))));
+      } else {
+        where.textContent = d.path;
+        list.replaceChildren(...(d.folders.length ? d.folders.map(x => row(x.git ? '🌿' : '📁', x.name, x.git ? 'git' : '', () => open(x.path)))
+          : [h('div', { class: 'empty' }, 'No folders in here. Use this one, or make a new folder.')]),
+          ...(d.truncated ? [h('div', { class: 'small muted folder-more' }, 'Only the first 1000 folders are shown.')] : []));
+      }
+      up.disabled = use.disabled = newBtn.disabled = !d.path;
+      if (!d.path) form.hidden = true;
+      use.textContent = d.path ? `Use ${d.name}` : 'Use this folder';
+      list.scrollTop = 0;
+    } catch (x) {
+      if (my !== seq || x.message === 'unauthorized') return;
+      if (!cur) return open(null); // a typed folder that doesn't exist: start from the drives
+      err.textContent = x.message;
+    }
+  };
+  up.addEventListener('click', () => open(cur?.parent ?? null));
+  use.addEventListener('click', () => { if (cur?.path) { close(); onPick(cur); } });
+  newBtn.addEventListener('click', () => { form.hidden = !form.hidden; if (!form.hidden) name.focus(); });
+  create.addEventListener('click', async () => {
+    if (!name.value.trim()) return name.focus();
+    create.disabled = true; err.textContent = '';
+    try {
+      const r = await api('POST', '/api/folders', { parent: cur.path, name: name.value, git: gitBox.checked });
+      name.value = ''; form.hidden = true;
+      toast(`Made the folder ${r.name}${r.git ? ' (a new git repository)' : ''}`);
+      await open(r.path);
+    } catch (x) { if (x.message !== 'unauthorized') err.textContent = x.message; }
+    create.disabled = false;
+  });
+  name.addEventListener('keydown', e => { if (e.key === 'Enter') create.click(); });
+  const close = openSheet('Choose a folder', h('div', { class: 'row folder-bar' }, up, where), list, form, err,
+    h('div', { class: 'row' }, newBtn, h('span', { class: 'grow' }), use));
+  open(start || null);
+}
+
 async function newView(params) {
   setTop('New session', '#/');
   if (!state.projects.length) state.projects = await api('GET', '/api/projects').catch(() => []);
-  const dl = h('datalist', { id: 'cwds' }, state.projects.filter(p => !p.scratch).map(p => h('option', { value: p.cwd })));
-  const cwd = h('input', { type: 'text', list: 'cwds', placeholder: 'Working directory, e.g. D:\\projects\\my-app', value: params.get('cwd') || '' });
+  const projects = state.projects.filter(p => !p.scratch && !/[\\/]\.claude[\\/]worktrees[\\/]/.test(p.cwd));
+  const dl = h('datalist', { id: 'cwds' }, projects.map(p => h('option', { value: p.cwd })));
+  const cwd = h('input', { type: 'text', list: 'cwds', placeholder: 'Folder, e.g. D:\\projects\\my-app', value: params.get('cwd') || '', 'aria-label': 'Project folder' });
   const ta = h('textarea', { rows: '5', placeholder: 'What should Claude do?' });
   const picks = makePickers();
   const photos = photoPicker();
   const err = h('div', { class: 'err' });
+  let known = null; // the folder picked in the browser: { path, git }
+
+  // its own worktree: a separate folder and branch made from the last commit (HANDOFF_GIT_ACTIONS)
+  const wtBox = h('input', { type: 'checkbox' });
+  const wtName = h('input', { type: 'text', placeholder: 'Name for it (optional; taken from the prompt)', 'aria-label': 'Worktree name', autocapitalize: 'off' });
+  const wtNote = h('div', { class: 'small muted' });
+  const syncWt = () => {
+    const notGit = known && known.path === cwd.value.trim() && !known.git;
+    wtBox.disabled = !!notGit;
+    if (notGit) wtBox.checked = false;
+    wtName.hidden = !wtBox.checked;
+    wtNote.textContent = notGit ? "This folder isn't a git repository, so it can't have a worktree."
+      : wtBox.checked ? 'Claude works in its own copy of the project, on a new branch (handoff/<name>) made from the last commit, so other sessions in this folder are not disturbed. Uncommitted changes are not copied.'
+      : 'Its own copy of the project on a new branch, for running sessions side by side.';
+  };
+  wtBox.addEventListener('change', syncWt);
+  cwd.addEventListener('input', () => { known = null; syncWt(); });
+  syncWt();
+
+  const browse = h('button', { class: 'btn', onclick: () => pickFolder(cwd.value.trim(), d => { cwd.value = d.path; known = d; syncWt(); ta.focus(); }) }, '📁 Browse');
+  const recent = projects.slice(0, 8).map(p => h('button', { class: 'chip-btn', title: p.cwd, onclick: () => { cwd.value = p.cwd; known = null; syncWt(); ta.focus(); } }, p.name));
+
   const go = h('button', { class: 'btn primary', onclick: async () => {
-    go.disabled = true; err.textContent = 'Starting Claude…';
+    go.disabled = true; err.textContent = wtBox.checked ? 'Making the worktree and starting Claude…' : 'Starting Claude…';
     try {
-      const r = await api('POST', '/api/sessions/new', { cwd: cwd.value.trim(), text: ta.value, images: photos.take(), ...picks.values() });
+      const r = await api('POST', '/api/sessions/new', { cwd: cwd.value.trim(), text: ta.value, images: photos.take(), ...picks.values(),
+        worktree: wtBox.checked ? (wtName.value.trim() || true) : undefined });
+      if (r.worktree) toast(`Claude is working in a new worktree, on ${r.worktree.branch}`, 5000);
       location.hash = `#/s/${r.sessionId}`;
     } catch (x) { err.textContent = x.message; go.disabled = false; }
   } }, 'Start session');
-  view.replaceChildren(h('div', { class: 'list' },
-    h('div', { class: 'label' }, 'Project folder'), cwd, dl,
+  view.replaceChildren(h('div', { class: 'list new-session' },
+    h('div', { class: 'label' }, 'Project folder'), h('div', { class: 'row folder-row' }, cwd, browse), dl,
+    recent.length ? h('div', { class: 'quick recent' }, ...recent) : null,
+    ...(state.me.git ? [h('label', { class: 'row wt-toggle' }, wtBox, 'Work in a new worktree'), wtName, wtNote] : []),
     h('div', { class: 'label' }, 'Prompt'), ta, photos.strip, photos.input, h('div', { class: 'row' }, photos.button, h('span', { class: 'small muted' }, 'Attach photos (optional)')),
     h('div', { class: 'label' }, 'Model · effort · mode'),
     h('div', { class: 'row opts' }, ...picks.els),

@@ -339,6 +339,22 @@ test('with it on: list the session folder, read text, stream images with a sandb
   cfg.fileBrowser = false;
 });
 
+// ---- the New session folder picker ----
+test('folder picker: drives, the folders in a folder, a new folder; it needs a login', async () => {
+  const roots = await req('GET', '/api/folders');
+  assert.equal(roots.status, 200);
+  assert.equal(roots.json.path, null);
+  assert.ok(roots.json.roots.some(r => r.kind === 'home'));
+  const made = await req('POST', '/api/folders', { parent: work, name: 'fresh-app', git: true });
+  assert.equal(made.status, 200, JSON.stringify(made.json));
+  assert.equal(made.json.git, true);
+  const inside = await req('GET', `/api/folders?path=${encodeURIComponent(work)}`);
+  assert.ok(inside.json.folders.some(x => x.name === 'fresh-app' && x.git));
+  assert.equal((await req('POST', '/api/folders', { parent: work, name: '../escape' })).status, 400);
+  assert.equal((await fetch(`${base}/api/folders`)).status, 401);
+  fs.rmSync(path.join(work, 'fresh-app'), { recursive: true, force: true });
+});
+
 // ---- git from the Changes tab, and a new session in its own worktree ----
 test('a session in its own worktree; Claude drafts the commit message; commit; the worktree goes once clean', async () => {
   Object.assign(process.env, { GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com' });
@@ -359,6 +375,7 @@ test('a session in its own worktree; Claude drafts the commit message; commit; t
     await req('POST', `/api/permissions/${p.id}`, { allow: true });
     const id = r.json.sessionId;
     fs.writeFileSync(path.join(wt, 'app.js'), 'let a = 2;\n');
+    assert.ok((await req('GET', '/api/projects')).json.some(x => x.name === 'gitproj · add-a-refund-button'), 'the worktree is named after its project');
 
     let c = (await req('GET', `/api/sessions/${id}/changes`)).json;
     assert.equal(c.worktree, 'add-a-refund-button');
