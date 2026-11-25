@@ -334,7 +334,7 @@ body.two-pane .composer { margin-left: -28px; margin-right: -28px; padding-left:
 .photo-btn .count { position: absolute; top: -3px; right: -3px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: var(--accent); color: var(--on-accent); font-size: 11px; font-weight: 700; display: grid; place-items: center; }
 .composer .opts { display: flex; align-items: center; gap: 6px; margin-top: 8px; overflow-x: auto; scrollbar-width: none; }
 .composer .opts::-webkit-scrollbar { display: none; }
-.composer .opts select { flex: 0 1 auto; min-width: 0; max-width: 46%; min-height: 32px; padding: 4px 28px 4px 12px; font-size: 13px; background-color: var(--surface-2); border-color: transparent; background-position: calc(100% - 15px) 55%, calc(100% - 10px) 55%; }
+.composer .opts select { flex: none; min-width: 0; max-width: 72vw; min-height: 32px; padding: 4px 28px 4px 12px; font-size: 13px; background-color: var(--surface-2); border-color: transparent; background-position: calc(100% - 15px) 55%, calc(100% - 10px) 55%; }
 .composer .opts label { flex: none; margin-left: 4px; }
 .composer .notice { margin-bottom: 8px; font-size: 12.5px; }
 .composer .notice.live { color: var(--muted); display: flex; align-items: center; gap: 7px; }
@@ -451,6 +451,7 @@ pre.diff > span { display: block; padding: 0 14px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+pre, code, .mono, pre *, code * { font-variant-ligatures: none !important; } /* => and === as typed */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 10px; border: 2px solid var(--bg); }
 ::-webkit-scrollbar-track { background: transparent; }

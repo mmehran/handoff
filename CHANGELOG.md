@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.2.0 (2026-11-25)
+
+### Added
+- **New look**: light and dark themes (Auto follows the system), a compact message box, and a chat header that stays pinned with the status, folder, search, mute and tabs.
+- **Sidebar layout** on tablets and computers (1000px and wider): live sessions and projects next to the open chat.
+- **Live to-do list**: Claude's checklist (TaskCreate/TaskUpdate, or TodoWrite) pinned in the chat header.
+- **Plan approval**: Claude's plan (ExitPlanMode) as a card; approve, approve and accept edits, or send it back with what to change.
+- **Overview tab**: time, your messages, tool calls, files changed, commands run, plan, to-do list and sub-agents (`GET /api/sessions/:id/activity`).
+- **Sub-agent runs**: open what each sub-agent did, from the chat or the overview (`GET /api/sessions/:id/agents`).
+- **Quick replies** above the message box, editable.
+- **Allow / Deny on approval notifications** (where the phone shows notification buttons).
+- **Share to Handoff** from other apps on Android, and **home-screen shortcuts** (New session, Search all chats).
+- **Mute a single chat**, besides whole projects; a project's mute also covers its worktrees.
+
+### Changed
+- Markdown is rendered properly: tables (scrolling sideways on a phone), links, numbered/nested/task lists, quotes, and code blocks with a language label and a Copy button.
+- Tool rows show paths from the project folder; to-do updates are one quiet line; search rows show the pattern.
+- The page loads its script and styles by versioned addresses, so a CDN or browser cache can't serve old ones after an update.
+- Resetting the password keeps the 2FA you already set up.
+
+### Fixed
+- A muted project still got alerts from chats that had moved to another folder or ran in a worktree.
+- The sign-in page said "missing header" after an update until the page was reloaded; it now says to reload.
+
 ## 1.1.0 (2026-11-25)
 
 ### Added

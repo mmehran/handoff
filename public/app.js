@@ -577,6 +577,9 @@ function onRunChange(r) {
 
 // ---------- search ----------
 // Text with every search word highlighted (built as DOM nodes, never HTML).
+// a search snippet without Markdown marks (# ** ` and table rules), so it reads as text
+const plainSnippet = s => String(s || '').replace(/\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?/g, ' ').replace(/(^|\s)#{1,6}\s+/g, '$1')
+  .replace(/\*\*|__|`/g, '').replace(/\s*\|\s*/g, ' · ').replace(/(\s*·\s*){2,}/g, ' · ').replace(/(\s·)+\s*$/, '').replace(/^\s*(·\s*)+/, '').replace(/\s{2,}/g, ' ').trim();
 function marked(text, terms) {
   const s = String(text || ''), low = s.toLowerCase(), out = [];
   let i = 0;
@@ -769,7 +772,7 @@ async function homeView() {
         const cards = d.results.map(r => h('a', { class: 'card', href: `#/s/${r.sessionId}?find=${encodeURIComponent(q)}` },
           h('div', { class: 't' }, h('span', {}, ...marked(r.title, terms))),
           h('div', { class: 's' }, `${base(r.cwd || r.projectKey)} · ${ago(r.mtime)}${r.total ? ` · ${r.total} message${r.total === 1 ? '' : 's'}` : ''}`),
-          ...r.hits.map(x => h('div', { class: 'hit' }, h('span', { class: 'who' }, x.kind === 'user' ? 'You' : 'Claude'), ' ', ...marked(x.snippet, terms)))));
+          ...r.hits.map(x => h('div', { class: 'hit' }, h('span', { class: 'who' }, x.kind === 'user' ? 'You' : 'Claude'), ' ', ...marked(plainSnippet(x.snippet), terms)))));
         results.replaceChildren(...[indexingNote(d), ...(cards.length ? cards : [h('div', { class: 'empty' }, 'No chat contains all of those words.')])].filter(Boolean));
       } catch (x) { if (my === seq) results.replaceChildren(h('div', { class: 'empty' }, x.message)); }
     };
@@ -1204,7 +1207,7 @@ async function sessionView(id, params = new URLSearchParams()) {
       findList.replaceChildren(...[indexingNote(d),
         hits.length ? h('div', { class: 'small muted' }, `${hits.length}${hits.length === 200 ? '+' : ''} message${hits.length === 1 ? '' : 's'}, newest first. Tap one to see it in context.`) : h('div', { class: 'empty' }, 'Not found in this chat.'),
         ...hits.map(x => h('button', { class: 'hit card', onclick: () => showInContext(id, x.offset, terms) },
-          h('span', { class: 'who' }, x.kind === 'user' ? 'You' : 'Claude'), x.ts ? h('span', { class: 'small muted' }, ' · ' + ago(Date.parse(x.ts))) : null, ' ', ...marked(x.snippet, terms)))
+          h('span', { class: 'who' }, x.kind === 'user' ? 'You' : 'Claude'), x.ts ? h('span', { class: 'small muted' }, ' · ' + ago(Date.parse(x.ts))) : null, ' ', ...marked(plainSnippet(x.snippet), terms)))
       ].filter(Boolean));
     } catch (x) { if (my === findSeq) findList.replaceChildren(h('div', { class: 'empty' }, x.message)); }
   };

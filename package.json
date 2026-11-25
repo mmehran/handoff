@@ -1,6 +1,6 @@
 {
   "name": "handoff",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Self-hosted remote control for Claude Code: browse every project and session, watch them live, reply and approve from your phone, get WhatsApp alerts.",
   "type": "module",
   "engines": {

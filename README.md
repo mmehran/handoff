@@ -8,10 +8,13 @@ It's a small Node.js server with no npm dependencies. It listens on `127.0.0.1` 
 
 <p align="center">
   <img src="docs/images/home.png" width="180" alt="Home: sessions running now, and every project">
+  <img src="docs/images/chat.png" width="180" alt="A chat: Claude's to-do list pinned at the top, tables and code shown properly">
   <img src="docs/images/question.png" width="180" alt="A question from Claude, answered with a tap">
-  <img src="docs/images/files.png" width="180" alt="Files tab: the project's code, coloured">
+  <img src="docs/images/overview.png" width="180" alt="Overview tab: time, files changed, commands, plan and to-do list">
   <img src="docs/images/changes.png" width="180" alt="Changes tab: what Claude changed, as a diff">
-  <img src="docs/images/search.png" width="180" alt="Search across every chat">
+</p>
+<p align="center">
+  <img src="docs/images/desktop.png" width="760" alt="On a computer or tablet: sessions and projects in a sidebar next to the open chat">
 </p>
 
 > Handoff is an independent open-source project. It is not affiliated with or endorsed by Anthropic. "Claude" and "Claude Code" are trademarks of Anthropic.
@@ -26,15 +29,20 @@ It's a small Node.js server with no npm dependencies. It listens on `127.0.0.1` 
   - start a new session in any folder
 - **Same choices as Claude Desktop.** The model list comes from your installed Claude Code, with each model's effort levels and the permission modes (Ask, Accept edits, Plan, Auto; Bypass only if you allow it).
 - **Attach photos.** Snap a screenshot or photo on your phone and send it with your prompt (up to 4, scaled down on the phone first).
-- **Approve tools from your phone.** Requests like "Allow Bash: npm test?" pop up with Allow and Deny buttons.
+- **Approve tools from your phone.** Requests like "Allow Bash: npm test?" pop up with Allow and Deny buttons, in the app or right on the notification.
 - **Answer Claude's questions.** When Claude asks a multiple-choice question, you see the options and tap one.
+- **Approve plans.** Claude's plan shows in full; approve it, approve it and let Claude make edits without asking, or send it back with what to change.
+- **Follow Claude's to-do list.** The checklist Claude keeps is pinned at the top of the chat: how far along it is and what it's doing now.
+- **See what a session did.** An Overview tab per chat: how long it ran, the files Claude changed, the commands it ran (and whether they worked), its plan, to-do list and sub-agents. Open any sub-agent run to see its own messages and tool calls.
+- **Quick replies.** "Continue", "Yes, go ahead", "Run the tests" and your own, one tap each, while Claude is waiting for you.
+- **Readable answers.** Tables, lists, links and code blocks (coloured, with a Copy button) show properly on a phone.
 - **Browse the project's files (optional).** A Files tab in every session shows its folder: find files by name, read code with colouring, preview Markdown, view images and download any file.
 - **See what Claude changed (optional).** A Changes tab lists the project's uncommitted git changes and shows each file's diff. Both tabs are read-only and off until you set `HANDOFF_FILE_BROWSER=true`.
 - **Search every chat.** One search box finds words in all your prompts and Claude's replies, across every project; each session can be searched on its own, and a hit opens in context.
 - **Remember me.** Tick it when you sign in on your own phone and it stays signed in for 30 days.
 - **Phone notifications.** Turn them on per device from the ⋮ menu and get the same alerts as notifications, even with the app closed. No WhatsApp, no account, nothing extra to install (on iPhone, add Handoff to the Home Screen first).
 - **WhatsApp alerts (optional).** Get a message when a session needs approval, asks a question, is waiting, finishes or fails. Reply `yes`/`no` or an option number to answer straight from WhatsApp. Set quiet hours (one summary afterwards) or mute individual projects. This uses a self-hosted sender built on the open-source [Baileys](https://github.com/WhiskeySockets/Baileys) library, so there's no paid API.
-- **Works on a phone.** The layout is responsive and touch-friendly, and you can install it to the home screen as a PWA.
+- **Works on a phone, tablet or computer.** Light and dark themes (or follow the system). On a phone the chat's status, actions and tabs stay pinned at the top; on a tablet or computer, sessions and projects stay in a sidebar. Install it to the home screen as an app: long-press its icon for New session or Search, and share text, links or photos to it from other apps (Android) to start a session.
 
 ## Pick your setup
 
