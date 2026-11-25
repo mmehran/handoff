@@ -26,7 +26,8 @@ export function inQuiet(q, date = new Date()) {
   const t = date.getHours() * 60 + date.getMinutes();
   return q.from < q.to ? t >= q.from && t < q.to : t >= q.from || t < q.to;
 }
-const sameFolder = process.platform === 'win32' ? s => String(s).toLowerCase() : s => String(s);
+// folder names compared the way the system does: forward slashes, no trailing slash, case-insensitive on Windows
+const sameFolder = s => { const f = String(s || '').replace(/\\/g, '/').replace(/\/+$/, ''); return process.platform === 'win32' ? f.toLowerCase() : f; };
 
 export class Notifier {
   // prefsFile: where muted projects are kept (data/notify.json)
@@ -56,21 +57,39 @@ export class Notifier {
     this.quietAllow = new Set(cfg.notify?.quietAllow || []);
     this.held = [];          // alerts kept back during quiet hours, summed up afterwards
     this.prefsFile = prefsFile;
-    this.muted = new Map();  // project folders whose alerts are off: compared folder name -> as written
-    try { for (const c of JSON.parse(fs.readFileSync(prefsFile, 'utf8')).muted || []) this.muted.set(sameFolder(c), c); } catch { /* none yet */ }
+    this.muted = new Map();  // project folders whose alerts are off (sub-folders too): compared name -> as written
+    this.mutedSessions = new Set(); // single chats whose alerts are off
+    try {
+      const p = JSON.parse(fs.readFileSync(prefsFile, 'utf8'));
+      for (const c of p.muted || []) this.muted.set(sameFolder(c), c);
+      for (const id of p.mutedSessions || []) this.mutedSessions.add(String(id));
+    } catch { /* none yet */ }
   }
 
   // ----- quiet hours and muted projects -----
-  isMuted(cwd) { return !!cwd && this.muted.has(sameFolder(cwd)); }
+  // a muted project also covers the folders inside it, such as git worktrees under .claude/worktrees
+  isMuted(cwd) {
+    if (!cwd) return false;
+    const f = sameFolder(cwd);
+    for (const m of this.muted.keys()) if (f === m || f.startsWith(m + '/')) return true;
+    return false;
+  }
   setMuted(cwd, on) {
     if (!cwd) return;
     if (on) this.muted.set(sameFolder(cwd), cwd); else this.muted.delete(sameFolder(cwd));
-    if (this.prefsFile) fs.writeFileSync(this.prefsFile, JSON.stringify({ muted: [...this.muted.values()] }, null, 2));
+    this.savePrefs();
+  }
+  setSessionMuted(sessionId, on) {
+    if (on) this.mutedSessions.add(sessionId); else this.mutedSessions.delete(sessionId);
+    this.savePrefs();
+  }
+  savePrefs() {
+    if (this.prefsFile) fs.writeFileSync(this.prefsFile, JSON.stringify({ muted: [...this.muted.values()], mutedSessions: [...this.mutedSessions] }, null, 2));
   }
   prefs() {
     return {
       enabled: this.on || !!this.push, quiet: this.quiet ? { text: this.quiet.text, active: inQuiet(this.quiet, this.now()), allow: [...this.quietAllow] } : null,
-      muted: [...this.muted.values()], held: this.held.length
+      muted: [...this.muted.values()], mutedSessions: [...this.mutedSessions], held: this.held.length
     };
   }
 
@@ -269,7 +288,7 @@ export class Notifier {
 
   event(kind, sessionId, { detail = '', cwd = '', title = '', force = false } = {}) {
     if (!this.active || !this.wants(kind) || !sessionId) return false;
-    if (this.isMuted(cwd)) return false;
+    if (this.isMuted(cwd) || this.mutedSessions.has(sessionId)) return false;
     if (inQuiet(this.quiet, this.now()) && !this.quietAllow.has(kind)) {
       this.held.push({ kind, sessionId, title, cwd, at: Date.now() });
       if (this.held.length > HELD_MAX) this.held.shift();
@@ -283,6 +302,7 @@ export class Notifier {
     // the rate limits above are decided at once; the message is built (reading the transcript) and sent after
     const urgent = kind === 'approval' || kind === 'question';
     this.compose(kind, sessionId, { detail, cwd, title }).then(m => {
+      if (m.muted) return; // listed under a muted project although it now works in another folder
       if (this.on) {
         this.send(m.text).then(() => this.log(`[notify] sent ${kind} for ${sessionId.slice(0, 8)}`))
           .catch(e => this.log(`[notify] WhatsApp send failed (${kind}): ${e.message}`));
@@ -303,7 +323,7 @@ export class Notifier {
       .filter(x => x !== false && x !== undefined && x !== null).join('\n').replace(/\n{3,}/g, '\n\n');
     // a phone notification: shorter, no WhatsApp reply instructions, opens the chat when tapped
     const pushBody = [`${name}${project ? ` · ${project}` : ''}`, detail.replace(/\n\nReply \*yes\*[\s\S]*$/, '').replace(/\nReply with the number[\s\S]*$/, '').replace(/\*/g, '')].filter(Boolean).join('\n');
-    return { text, push: { title: head, body: pushBody, url: `/#/s/${sessionId}`, tag: `${sessionId}:${kind}` } };
+    return { text, muted: this.isMuted(info?.cwd), push: { title: head, body: pushBody, url: `/#/s/${sessionId}`, tag: `${sessionId}:${kind}` } };
   }
 
   async sendWhatsApp(text) {

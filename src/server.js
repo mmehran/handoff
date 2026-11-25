@@ -72,7 +72,20 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
     onLinkChange: s => broadcast('whatsapp', s),
     prefsFile: path.join(DATA_DIR, 'notify.json') // projects muted from the web app
   }).start();
-  route('GET', /^\/api\/notify\/prefs$/, (req, res) => json(res, 200, notifier.prefs()));
+  route('GET', /^\/api\/notify\/prefs$/, async (req, res) => json(res, 200, await prefsWithTitles()));
+  const prefsWithTitles = async () => {
+    const p = notifier.prefs();
+    p.mutedChats = await Promise.all(p.mutedSessions.map(async id => ({ id, title: (await store.sessionInfo(id).catch(() => null))?.title || id.slice(0, 8) })));
+    return p;
+  };
+  route('POST', /^\/api\/notify\/mute-session$/, async (req, res, ctx) => {
+    const b = await readJson(req);
+    const id = String(b.sessionId || '');
+    if (!UUID_RE.test(id)) throw httpErr(400, 'which chat?');
+    notifier.setSessionMuted(id, !!b.muted);
+    audit(ctx.ip, 'notify_mute', { sessionId: id, muted: !!b.muted });
+    json(res, 200, await prefsWithTitles());
+  });
   const needPush = () => { if (!push) throw httpErr(404, 'push notifications are turned off (HANDOFF_PUSH)'); return push; };
   route('GET', /^\/api\/push$/, (req, res) => json(res, 200, push ? { enabled: true, publicKey: push.publicKey, devices: push.subs.length } : { enabled: false }));
   route('POST', /^\/api\/push\/subscribe$/, async (req, res, ctx) => {
@@ -99,7 +112,7 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
     if (!cwd || cwd.length > 1000) throw httpErr(400, 'which project folder?');
     notifier.setMuted(cwd, !!b.muted);
     audit(ctx.ip, 'notify_mute', { cwd, muted: !!b.muted });
-    json(res, 200, notifier.prefs());
+    json(res, 200, await prefsWithTitles());
   });
   route('GET', /^\/api\/notify$/, async (req, res) => json(res, 200, await notifier.status()));
   route('POST', /^\/api\/notify\/test$/, async (req, res, ctx) => {

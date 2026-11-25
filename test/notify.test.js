@@ -251,3 +251,27 @@ test('muted projects send nothing, and the list is kept on disk', async () => {
   n.setMuted('D:\\Work\\Shop', false);
   assert.equal(make().isMuted('D:\\Work\\Shop'), false);
 });
+
+test('mute covers sub-folders of a project (worktrees), single chats, and chats that moved folder', async () => {
+  const fs = await import('node:fs'), os = await import('node:os'), path = await import('node:path');
+  const prefsFile = path.join(fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-mute2-'))), 'notify.json');
+  const sent = [];
+  const store = { sessionInfo: async id => ({ title: 'Chat ' + id, cwd: id === 'moved' ? 'D:\\work\\shop' : 'D:\\elsewhere' }) };
+  const make = () => new Notifier({ notify: { enabled: true, token: 't'.repeat(30), to: '15551234567' } },
+    { store, runner: new EventEmitter(), log: () => {}, send: async t => { sent.push(t); }, prefsFile });
+  const n = make();
+  n.setMuted('D:\\work\\shop', true);
+  assert.equal(n.event('done', 'a', { cwd: 'D:\\work\\shop\\.claude\\worktrees\\fix-login' }), false, 'a worktree inside the project');
+  assert.equal(n.event('done', 'b', { cwd: 'D:\\work\\shopping' }) !== false, true, 'a different folder that only starts the same');
+  n.setSessionMuted('c', true);
+  assert.equal(n.event('done', 'c', { cwd: 'D:\\other' }), false, 'a single muted chat');
+  // working somewhere else now, but its transcript says it belongs to the muted project
+  assert.ok(n.event('done', 'moved', { cwd: 'D:\\new-place' }));
+  await settle();
+  assert.deepEqual(sent.map(t => /Session: (.*)/.exec(t)[1]), ['Chat b'], 'only the chat in the unmuted folder got through');
+  const again = make();
+  assert.equal(again.mutedSessions.has('c'), true, 'kept on disk');
+  assert.deepEqual(again.prefs().mutedSessions, ['c']);
+  again.setSessionMuted('c', false);
+  assert.equal(make().mutedSessions.has('c'), false);
+});

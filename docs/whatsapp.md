@@ -95,7 +95,7 @@ Restart `npm start`. The log shows `[notify] WhatsApp notifications on -> +15551
 | Keep the WhatsApp library current (about monthly) | `npm run update:whatsapp`. WhatsApp changes its protocol now and then and an old library stops connecting. This rebuilds the sender with the newest 6.7.x Baileys; the link survives, because the keys are in the volume. `curl http://127.0.0.1:7870/status` shows the version. |
 | Unlink the sending phone | Remove the device on the phone (Linked devices), or wipe the keys: `docker compose down -v` |
 | Quiet hours | `HANDOFF_WHATSAPP_QUIET=23:00-07:00` in `.env`, then restart. Alerts in that window are held and summed up in one message when it ends. `HANDOFF_WHATSAPP_QUIET_ALLOW=approval,question` lets urgent kinds through. |
-| Mute one project | On the project's page, tap **Mute alerts**. The **⋮ → WhatsApp alerts…** sheet lists muted projects and the quiet hours. |
+| Mute a project or a chat | On a project's page, tap **Mute alerts**: that covers every chat in it, its git worktrees included. On a chat's page, **Mute alerts** silences just that chat. **⋮ → Alert settings…** lists both, and the quiet hours. Mutes apply to phone notifications too. |
 | Turn notifications off | `HANDOFF_WHATSAPP_ENABLED=false`, then restart Handoff |
 | Change the recipient | `npm run setup:whatsapp` and type the new number, then `docker compose up -d` (the container needs the new allow-list) and restart Handoff |
 

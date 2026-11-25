@@ -138,7 +138,7 @@ $('#menu').addEventListener('click', () => {
   const sheet = h('div', { class: 'list' },
     h('button', { class: 'btn', onclick: () => { location.hash = '#/new'; close(); } }, '+ New session'),
     state.me?.push ? h('button', { class: 'btn', onclick: () => { close(); showPushSettings(); } }, 'Phone notifications…') : null,
-    state.me?.whatsapp?.enabled ? h('button', { class: 'btn', onclick: () => { close(); showAlertSettings(); } }, 'WhatsApp alerts…') : null,
+    alertsOn() ? h('button', { class: 'btn', onclick: () => { close(); showAlertSettings(); } }, 'Alert settings…') : null,
     h('button', { class: 'btn', onclick: async () => {
       try { await api('POST', '/api/notify/test'); toast('Test WhatsApp message sent'); }
       catch (x) { toast('WhatsApp: ' + x.message, 6000); }
@@ -212,6 +212,8 @@ async function showPushSettings() {
 }
 
 // ---------- WhatsApp alert settings: quiet hours and muted projects ----------
+// alerts go out at all: WhatsApp set up, or phone notifications available
+const alertsOn = () => !!(state.me?.whatsapp?.enabled || state.me?.push);
 const sameDir = (a, b) => String(a).toLowerCase() === String(b).toLowerCase(); // the server compares case-insensitively on Windows
 async function showAlertSettings() {
   const box = h('div', { class: 'list' }, h('div', { class: 'muted small' }, 'Loading…'));
@@ -219,7 +221,7 @@ async function showAlertSettings() {
   const onKey = e => { if (e.key === 'Escape') close(); };
   const overlay = h('div', { class: 'overlay', onclick: e => { if (e.target === overlay) close(); } },
     h('div', { class: 'ctx-sheet', role: 'dialog', 'aria-label': 'WhatsApp alerts' },
-      h('div', { class: 'row' }, h('b', {}, 'WhatsApp alerts'), h('span', { class: 'grow' }), h('button', { class: 'icon', 'aria-label': 'Close', onclick: close }, '×')), box));
+      h('div', { class: 'row' }, h('b', {}, 'Alert settings'), h('span', { class: 'grow' }), h('button', { class: 'icon', 'aria-label': 'Close', onclick: close }, '×')), box));
   document.body.append(overlay);
   addEventListener('keydown', onKey);
   const render = pr => {
@@ -233,7 +235,12 @@ async function showAlertSettings() {
       ...(pr.muted.length ? pr.muted.map(cwd => h('div', { class: 'row' },
         h('span', { class: 'grow mono small' }, names.get(cwd.toLowerCase()) ? `${names.get(cwd.toLowerCase())} · ${cwd}` : cwd),
         h('button', { class: 'btn', onclick: async () => render(await api('POST', '/api/notify/mute', { cwd, muted: false })) }, 'Unmute')))
-        : [h('div', { class: 'muted' }, 'None. Mute a project from its page.')]));
+        : [h('div', { class: 'muted' }, 'None. Mute a project from its page; that also covers its worktrees.')]),
+      h('div', { class: 'label' }, 'Muted chats'),
+      ...(pr.mutedChats?.length ? pr.mutedChats.map(c => h('div', { class: 'row' },
+        h('a', { class: 'grow', href: `#/s/${c.id}`, onclick: close }, c.title),
+        h('button', { class: 'btn', onclick: async () => render(await api('POST', '/api/notify/mute-session', { sessionId: c.id, muted: false })) }, 'Unmute')))
+        : [h('div', { class: 'muted' }, 'None. Mute a chat from its page.')]));
   };
   try { render(await api('GET', '/api/notify/prefs')); }
   catch (x) { box.replaceChildren(h('div', { class: 'empty' }, x.message)); }
@@ -858,10 +865,18 @@ async function sessionView(id, params = new URLSearchParams()) {
   findBox.addEventListener('input', () => { clearTimeout(findTimer); findTimer = setTimeout(runFind, 350); });
   const openFind = q => { findPanel.hidden = false; if (q != null && q !== findBox.value) { findBox.value = q; runFind(); } findBox.focus({ preventScroll: true }); };
   const findBtn = state.me.search ? h('button', { class: 'btn', onclick: () => { if (findPanel.hidden) { openFind(); scrollTo(0, 0); } else findPanel.hidden = true; } }, 'Search') : null;
+  // alerts for this chat only (WhatsApp and phone notifications)
+  let chatMuted = false;
+  const muteBtn = alertsOn() ? h('button', { class: 'btn', onclick: async () => {
+    try { await api('POST', '/api/notify/mute-session', { sessionId: id, muted: !chatMuted }); chatMuted = !chatMuted; muteLabel(); toast(chatMuted ? 'Alerts muted for this chat' : 'Alerts are on again for this chat'); }
+    catch (x) { toast(x.message); }
+  } }) : null;
+  const muteLabel = () => { muteBtn.textContent = chatMuted ? '🔔 Unmute alerts' : '🔕 Mute alerts'; muteBtn.title = chatMuted ? 'Alerts for this chat are off' : 'Stop alerts for this chat only'; };
+  if (muteBtn) { muteLabel(); api('GET', '/api/notify/prefs').then(pr => { chatMuted = pr.mutedSessions.includes(id); muteLabel(); }).catch(() => {}); }
   const head = h('div', { class: 'session-head' },
     h('div', { class: 'row' }, h('div', { class: 'grow mono' }, info.cwd || ''), status),
     settings,
-    h('div', { class: 'row' }, findBtn, intBtn, stopBtn));
+    h('div', { class: 'row' }, findBtn, muteBtn, intBtn, stopBtn));
   const msgs = h('div', { id: 'msgs' });
   const working = h('div', { class: 'working', hidden: true }, h('span', { class: 'spinner' }), h('span', { class: 'wtext' }, 'Claude is working…'));
   const older = h('button', { class: 'btn', hidden: true }, 'Load older messages');

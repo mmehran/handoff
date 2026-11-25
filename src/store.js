@@ -246,12 +246,15 @@ export class Store {
       const t = JSON.parse(await fsp.readFile(path.join(file.slice(0, -6), 'custom-title.json'), 'utf8'));
       m.title = t.customTitle || '';
     } catch { /* none */ }
+    const tail = (await readSlice(file, Math.max(0, st.size - 256 * 1024), Math.min(st.size, 256 * 1024))).toString('utf8');
     // 2) latest custom-title / ai-title in the tail
     if (!m.title) {
-      const tail = (await readSlice(file, Math.max(0, st.size - 256 * 1024), Math.min(st.size, 256 * 1024))).toString('utf8');
       const all = [...tail.matchAll(/"(?:customTitle|aiTitle)":"((?:[^"\\]|\\.){1,300})"/g)];
       if (all.length) m.title = safeJsonString(all[all.length - 1][1]);
     }
+    // the folder the session works in now: a session can move to another folder, so the latest one counts
+    const cwds = [...tail.matchAll(/"cwd":"((?:[^"\\]|\\.)*)"/g)];
+    if (cwds.length) m.cwd = safeJsonString(cwds[cwds.length - 1][1]);
     // 3) first user prompt
     if (!m.title || !m.cwd) {
       const head = (await readSlice(file, 0, Math.min(st.size, 128 * 1024))).toString('utf8');
