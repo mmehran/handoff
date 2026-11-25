@@ -237,3 +237,6 @@ pre.diff > span { display: block; padding: 0 12px; }
 .photo-btn { padding-left: 10px; padding-right: 10px; }
 .msg .thumbs { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 .msg .thumbs img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; }
+
+/* links in text (e.g. "go to it" in the composer notice) use the accent colour, not the browser default */
+a { color: var(--accent); }
