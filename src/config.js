@@ -71,6 +71,7 @@ export function loadConfig() {
     permissionTimeoutMinutes: num('HANDOFF_PERMISSION_TIMEOUT_MINUTES', 30),
     tunnel: str('HANDOFF_TUNNEL', 'none').toLowerCase(), // none | quick | ngrok | cloudflare
     tunnelToken: str('HANDOFF_CLOUDFLARE_TUNNEL_TOKEN'),
+    tunnelProtocol: ['quic', 'http2'].includes(str('HANDOFF_TUNNEL_PROTOCOL').toLowerCase()) ? str('HANDOFF_TUNNEL_PROTOCOL').toLowerCase() : 'auto',
     publicHostname: str('HANDOFF_PUBLIC_HOSTNAME').replace(/^https?:\/\//, '').replace(/\/.*$/, '').toLowerCase(),
     notify: {
       enabled: bool('HANDOFF_WHATSAPP_ENABLED'),

@@ -33,8 +33,10 @@ function which(bin) {
 //    a connected tunnel gets a public check at once and is restarted if that misses; a cloudflared still
 //    connecting is left to its grace period (restarting it on every stall of a busy machine means it never connects)
 //  - every 60s fetch https://<hostname>/api/health and check it reaches *this* server; 3 misses -> restart
+//  - protocol 'auto': cloudflared uses QUIC (UDP). Some networks and VPNs break it: connections time out
+//    ("no recent network activity") or never come up. Then use HTTP/2 (TCP) for 6 hours, and try QUIC again.
 // bin, spawnFn and fetchFn are there for tests.
-export function startNamedTunnel({ token, hostname, port, healthId, log, bin = which('cloudflared'), spawnFn = spawn, fetchFn = fetch }) {
+export function startNamedTunnel({ token, hostname, port, healthId, log, protocol = 'auto', bin = which('cloudflared'), spawnFn = spawn, fetchFn = fetch }) {
   if (!bin) { log('[tunnel] cloudflared not found. Install it: winget install --id Cloudflare.cloudflared'); return null; }
   const metrics = '127.0.0.1:20241';
   const urlFile = path.join(DATA_DIR, 'public-url.txt');
@@ -44,11 +46,21 @@ export function startNamedTunnel({ token, hostname, port, healthId, log, bin = w
   const GRACE = 90e3, MAX_GRACE = 300e3, DOWN_LIMIT = 30e3;
   let proc = null, startedAt = 0, nextStart = 0, backoff = 5e3, grace = GRACE;
   let connected = false, downSince = 0, publicFails = 0, lastTick = Date.now(), stopped = false;
+  const QUIC_ERRORS = 3, QUIC_WINDOW = 10 * 60e3, HTTP2_FOR = 6 * 3600e3;
+  let http2Until = protocol === 'http2' ? Infinity : 0, quicErrors = [];
+  const onHttp2 = () => Date.now() < http2Until;
+  const useHttp2 = (why) => {
+    if (protocol !== 'auto' || onHttp2()) return false;
+    http2Until = Date.now() + HTTP2_FOR; quicErrors = [];
+    log(`[tunnel] ${why}; switching cloudflared from QUIC to HTTP/2 for the next ${HTTP2_FOR / 3600e3} hours`);
+    return true;
+  };
 
   const launch = (why) => {
-    log(`[tunnel] starting cloudflared (${why}); allowing ${grace / 1000}s to connect`);
+    const proto = onHttp2() ? 'http2' : protocol === 'quic' ? 'quic' : 'auto';
+    log(`[tunnel] starting cloudflared (${why}${proto === 'http2' ? ', HTTP/2' : ''}); allowing ${grace / 1000}s to connect`);
     startedAt = Date.now(); connected = false; downSince = 0;
-    proc = spawnFn(bin, ['tunnel', '--no-autoupdate', '--metrics', metrics, 'run'], {
+    proc = spawnFn(bin, ['tunnel', '--no-autoupdate', '--metrics', metrics, '--protocol', proto, 'run'], {
       windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, TUNNEL_TOKEN: token }
     });
     const p = proc;
@@ -59,7 +71,16 @@ export function startNamedTunnel({ token, hostname, port, healthId, log, bin = w
           connected = true; grace = GRACE;
           const loc = /location=(\S+)/.exec(line)?.[1] || '?';
           log(`[tunnel] connected to Cloudflare (${loc}) after ${Math.round((Date.now() - startedAt) / 1000)}s`);
-        } else if (/\bERR\b/.test(line)) log(`[tunnel] ${line.trim().slice(0, 300)}`);
+        } else if (/\bERR\b/.test(line)) {
+          log(`[tunnel] ${line.trim().slice(0, 300)}`);
+          if (/quic|no recent network activity/i.test(line) && !onHttp2()) {
+            const now = Date.now();
+            quicErrors = quicErrors.filter(t => now - t < QUIC_WINDOW).concat(now);
+            if (quicErrors.length >= QUIC_ERRORS && useHttp2(`QUIC failed ${quicErrors.length} times in ${QUIC_WINDOW / 60e3} minutes`)) {
+              setImmediate(() => { if (p === proc) restart('QUIC keeps failing'); });
+            }
+          }
+        }
       }
     };
     p.stdout.on('data', scan);
@@ -96,6 +117,7 @@ export function startNamedTunnel({ token, hostname, port, healthId, log, bin = w
       if (now - startedAt > grace) {
         const waited = grace;
         grace = Math.min(grace * 2, MAX_GRACE); // network is slow: be more patient next time
+        useHttp2('QUIC did not connect'); // in case it's the protocol and not the network
         restart(`not connected after ${waited / 1000}s`);
       }
       return;
@@ -132,14 +154,14 @@ export function startNamedTunnel({ token, hostname, port, healthId, log, bin = w
 
 // Quick (random-URL) tunnel. Returns { stop() }. If the tunnel process dies (network drop, sleep), it is restarted with backoff;
 // a quick tunnel then gets a new URL, which is written to data/public-url.txt again.
-export function startTunnel(kind, port, log) {
+export function startTunnel(kind, port, log, { protocol = 'auto' } = {}) {
   const target = `http://127.0.0.1:${port}`;
   const order = kind === 'auto' ? ['cloudflared', 'ngrok'] : [kind];
   for (const k of order) {
     const bin = which(k);
     if (!bin) continue;
     const args = k === 'cloudflared'
-      ? ['tunnel', '--url', target, '--no-autoupdate']
+      ? ['tunnel', '--url', target, '--no-autoupdate', ...(protocol !== 'auto' ? ['--protocol', protocol] : [])]
       : ['http', target, '--log', 'stdout', '--log-format', 'json'];
     let proc = null, stopped = false, delay = 30e3, timer = null;
     const launch = () => {

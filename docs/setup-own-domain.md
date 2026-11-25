@@ -101,6 +101,7 @@ Handoff runs `cloudflared` itself and checks on it every 5 s:
 - **`cloudflared` exited:** it's restarted after 5 s, backing off to 60 s if it keeps crashing.
 - **After sleep:** a 5 s check that arrives more than 20 s late means the computer slept, so `cloudflared` is restarted at once.
 - **End to end:** every 60 s, Handoff fetches `https://<hostname>/api/health` from outside and checks that the answer comes from *this* process. After 3 misses in a row it restarts `cloudflared`.
+- **QUIC or HTTP/2:** `cloudflared` normally connects over QUIC (UDP). Some VPNs and networks break it, and its connections keep timing out with "no recent network activity". After 3 such errors in 10 minutes, or a connection that never comes up, Handoff restarts it on HTTP/2 (TCP) for 6 hours, then tries QUIC again. Set `HANDOFF_TUNNEL_PROTOCOL=http2` to always use HTTP/2.
 
 Everything is logged to the console, or to `data/server.log` with [autostart](autostart.md).
 

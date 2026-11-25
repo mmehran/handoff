@@ -34,8 +34,8 @@ server.listen(cfg.port, cfg.host, () => {
   if (tunnelKind === 'none') return;
   if (!cfg.totpEnabled) console.warn('WARNING: exposing to the internet without 2FA. Strongly consider enabling it (npm run setup).');
   tunnel = tunnelKind === 'cloudflare'
-    ? startNamedTunnel({ token: cfg.tunnelToken, hostname: cfg.publicHostname, port: cfg.port, healthId, log: console.log })
-    : startTunnel(tunnelKind === 'quick' ? 'cloudflared' : 'ngrok', cfg.port, console.log);
+    ? startNamedTunnel({ token: cfg.tunnelToken, hostname: cfg.publicHostname, port: cfg.port, healthId, log: console.log, protocol: cfg.tunnelProtocol })
+    : startTunnel(tunnelKind === 'quick' ? 'cloudflared' : 'ngrok', cfg.port, console.log, { protocol: cfg.tunnelProtocol });
 });
 
 const shutdown = () => {

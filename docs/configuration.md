@@ -32,6 +32,7 @@ Every setting is an environment variable. Handoff reads them from `.env` in the 
 | `HANDOFF_TUNNEL` | `none` (`.env.example` sets `quick`) | `none`, `quick` (Cloudflare quick tunnel, random URL), `cloudflare` (your own domain), or `ngrok`. `npm run start:local` ignores it. |
 | `HANDOFF_PUBLIC_HOSTNAME` | empty | Your hostname, e.g. `claude.example.com`. Used for the named tunnel and for links in WhatsApp messages. |
 | `HANDOFF_CLOUDFLARE_TUNNEL_TOKEN` | empty | Run token of the named tunnel. Written by `npm run setup:domain`. |
+| `HANDOFF_TUNNEL_PROTOCOL` | `auto` | How `cloudflared` connects: `auto` (QUIC, switching to HTTP/2 for 6 hours when QUIC keeps failing, as it can on VPNs or strict networks), `quic` or `http2`. |
 
 The Cloudflare **API** token is never stored. `npm run setup:domain` reads it from a prompt, or from `CLOUDFLARE_API_TOKEN` (and `CLOUDFLARE_ACCOUNT_ID`) for that one command.
 
