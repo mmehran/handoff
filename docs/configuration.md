@@ -46,6 +46,7 @@ The Cloudflare **API** token is never stored. `npm run setup:domain` reads it fr
 | `HANDOFF_DEFAULT_MODE` | `manual` | Permission mode for sessions started from the phone: `manual` (ask before tools), `acceptEdits`, `plan`, `auto`, `dontAsk`. |
 | `HANDOFF_ALLOW_BYPASS` | `false` | Offer `bypassPermissions` (no approvals at all) in the mode menu. |
 | `HANDOFF_ALLOWED_ROOTS` | empty | Only allow new sessions inside these folders, and only browse files inside them. Separator: `;` on Windows, `:` on macOS/Linux. Empty = any existing folder. |
+| `HANDOFF_AUDIT_TEXT` | `true` | Record the first 200 characters of each prompt and typed answer in `data/audit.log`. `false` keeps only who did what and when. |
 | `HANDOFF_FILE_BROWSER` | `false` | Adds a **Files** tab to every session, to browse its project folder and open text, code and images (read-only). See [security](security.md#files-tab). |
 | `HANDOFF_MAX_RUNS` | `3` | Most Claude processes Handoff runs at once. |
 | `HANDOFF_IDLE_KILL_MINUTES` | `15` | Stop an idle process Handoff started. It resumes on the next message. |

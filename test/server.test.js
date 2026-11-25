@@ -349,3 +349,20 @@ test('the page version is the same on every route, and changes with the page set
   finally { cfg.fileBrowser = !cfg.fileBrowser; }
   assert.equal((await req('GET', '/api/me')).json.version, v);
 });
+
+test('HANDOFF_AUDIT_TEXT=false keeps what prompts said out of the audit log', async () => {
+  cfg.auditText = false;
+  const perm = sseWait('/api/events', ev => ev === 'permission');
+  const r = await req('POST', '/api/sessions/new', { cwd: work, text: 'my private words' });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  const p = await perm;
+  await req('POST', `/api/permissions/${p.id}`, { allow: true });
+  await req('POST', `/api/sessions/${r.json.sessionId}/stop`);
+  await new Promise(res => setTimeout(res, 200));
+  const lines = fs.readFileSync(path.join(tmp, 'data', 'audit.log'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+  const entry = lines.filter(l => l.action === 'session_new').pop();
+  assert.equal(entry.sessionId, r.json.sessionId);
+  assert.equal(entry.text, undefined);
+  assert.ok(!JSON.stringify(lines).includes('my private words'));
+  cfg.auditText = true;
+});

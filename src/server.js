@@ -9,6 +9,7 @@ import { Runner, httpErr } from './runner.js';
 import { injectMessage } from './inbox.js';
 import { Notifier, buildAnswer } from './notify.js';
 import { FileBrowser } from './files.js';
+import { rotate } from './logfile.js';
 
 const PUBLIC = path.join(ROOT, 'public');
 const COOKIE = 'handoff_sid';
@@ -31,7 +32,10 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
   const runner = new Runner(cfg, claudePath);
   const globalClients = new Set();
   const auditFile = path.join(DATA_DIR, 'audit.log');
-  const audit = (ip, action, detail = {}) => {
+  let auditWrites = 0;
+  const audit = (ip, action, { text, ...detail } = {}) => {
+    if (text !== undefined && cfg.auditText) detail.text = text;
+    if (auditWrites++ % 200 === 0) rotate(auditFile); // past 5 MB: audit.log.1, so it can't grow forever
     fs.appendFile(auditFile, JSON.stringify({ t: new Date().toISOString(), ip, action, ...detail }) + '\n', () => {});
   };
 

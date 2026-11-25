@@ -4,6 +4,9 @@
 //  - every other running session (Claude Desktop / terminal), from ~/.claude/sessions/<pid>.json:
 //      status -> "waiting"   needs your input/approval (waitingFor says what)
 //      "busy" -> "idle"      finished its work
+// +923001234567 -> +92•••••4567: logs show which number without giving it away
+export const maskNumber = n => { const d = String(n || '').replace(/\D/g, ''); return d.length > 6 ? `+${d.slice(0, 2)}${'•'.repeat(d.length - 6)}${d.slice(-4)}` : '+' + '•'.repeat(d.length); };
+
 const PER_SESSION_GAP = 20e3;   // same kind of message for one session at most every 20s
 const MAX_PER_MINUTE = 12;
 
@@ -52,7 +55,7 @@ export class Notifier {
     this.linkTimer.unref?.();
     this.scan();
     this.checkLink();
-    this.log(`[notify] WhatsApp notifications on -> +${this.cfg.notify.to}`);
+    this.log(`[notify] WhatsApp notifications on -> ${maskNumber(this.cfg.notify.to)}`);
     return this;
   }
   stop() { clearInterval(this.timer); clearInterval(this.inbox); clearInterval(this.linkTimer); }

@@ -61,6 +61,10 @@ Off by default. With `HANDOFF_FILE_BROWSER=true`, every session gets a read-only
 
 `data/audit.log` records sign-ins (successful, failed and blocked, and whether Remember me was ticked), prompts sent, approvals, interrupts, stops, files opened in the Files tab and WhatsApp tests, with the client IP from Cloudflare's `CF-Connecting-IP` header.
 
+- It includes the first 200 characters of each prompt and typed answer. Set `HANDOFF_AUDIT_TEXT=false` to keep only who did what and when.
+- Past 5 MB it becomes `audit.log.1`, replacing the previous one; `server.log` works the same way.
+- Phone numbers are masked in the logs (`+92••••••4567`), in Handoff's and in the WhatsApp sender's.
+
 ## Reporting a vulnerability
 
 Please report security issues privately to the maintainer instead of opening a public issue.

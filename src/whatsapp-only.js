@@ -7,7 +7,7 @@
 import { EventEmitter } from 'node:events';
 import { loadConfig } from './config.js';
 import { Store } from './store.js';
-import { Notifier, buildAnswer } from './notify.js';
+import { Notifier, buildAnswer, maskNumber } from './notify.js';
 import { injectMessage } from './inbox.js';
 import { logToFile } from './logfile.js';
 
@@ -42,7 +42,7 @@ const notifier = new Notifier({ ...cfg, publicHostname: '' }, { // no web UI, so
 const status = await notifier.status();
 console.log(`Handoff (WhatsApp only) watching ${cfg.claudeHome}`);
 console.log(status.connected
-  ? `WhatsApp sender linked as ${status.me || '?'}; notifications go to +${notify.to}`
+  ? `WhatsApp sender linked as ${status.me || '?'}; notifications go to ${maskNumber(notify.to)}`
   : `WhatsApp sender not reachable/linked at ${notify.url} (${status.error || 'open ' + notify.url + '/qr'}); will keep trying`);
 
 const shutdown = () => { notifier.stop(); process.exit(0); };

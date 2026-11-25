@@ -180,3 +180,16 @@ test('link check: off when WhatsApp is not set up; a delivered message clears a 
   assert.equal(n.linkState().connected, true);
   assert.deepEqual(changes, ['unlinked', null]);
 });
+
+test('phone numbers are masked in logs', async () => {
+  const { maskNumber } = await import('../src/notify.js');
+  assert.equal(maskNumber('923001234567'), '+92••••••4567');
+  assert.equal(maskNumber('+1 555 123 4567'), '+15•••••4567');
+  assert.equal(maskNumber('123'), '+•••');
+  const logs = [];
+  const n = new Notifier({ notify: { enabled: true, token: 't'.repeat(30), to: '923001234567', url: 'http://127.0.0.1:9' } },
+    { store: { liveSessions: () => [] }, runner: new EventEmitter(), log: l => logs.push(l), send: async () => {} });
+  n.start(); n.stop();
+  assert.ok(logs.some(l => l.includes('+92••••••4567')));
+  assert.ok(!logs.join('\n').includes('923001234567'));
+});

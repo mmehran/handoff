@@ -29,6 +29,9 @@ if (!ALLOWED.length) { console.error('ALLOWED_TO is empty'); process.exit(1); }
 let BAILEYS = '?';
 try { BAILEYS = JSON.parse(fs.readFileSync(new URL('./node_modules/@whiskeysockets/baileys/package.json', import.meta.url), 'utf8')).version; } catch { /* unknown */ }
 
+// +923001234567 -> +92•••••4567 in the log
+const mask = n => { const d = String(n || '').replace(/\D/g, ''); return d.length > 6 ? `+${d.slice(0, 2)}${'•'.repeat(d.length - 6)}${d.slice(-4)}` : '+' + '•'.repeat(d.length); };
+
 const logger = pino({ level: 'warn' });
 let sock = null, qr = null, connected = false, me = null, retry = 0;
 const inbox = [];   // replies waiting to be picked up by Handoff
@@ -53,7 +56,7 @@ async function connect() {
       if (!text.trim()) continue;
       inbox.push({ id: msg.key.id, from, text: text.slice(0, 4000), at: Date.now() });
       if (inbox.length > 200) inbox.splice(0, inbox.length - 200);
-      console.log(`[wa] reply from +${from}: ${text.slice(0, 60)}`);
+      console.log(`[wa] reply from ${mask(from)} (${text.length} chars)`);
     }
   });
   sock.ev.on('connection.update', async (u) => {
@@ -65,7 +68,7 @@ async function connect() {
     if (u.connection === 'open') {
       connected = true; qr = null; retry = 0;
       me = sock.user?.id?.split(':')[0]?.split('@')[0] || null;
-      console.log(`[wa] linked and connected as +${me}`);
+      console.log(`[wa] linked and connected as ${mask(me)}`);
     }
     if (u.connection === 'close') {
       connected = false;
@@ -133,6 +136,6 @@ http.createServer(async (req, res) => {
     console.error('[wa] request failed', e.message);
     json(res, 500, { error: e.message });
   }
-}).listen(PORT, () => console.log(`[wa] listening on :${PORT} (Baileys ${BAILEYS}); allowed recipients: ${ALLOWED.map(n => '+' + n).join(', ')}`));
+}).listen(PORT, () => console.log(`[wa] listening on :${PORT} (Baileys ${BAILEYS}); allowed recipients: ${ALLOWED.map(mask).join(', ')}`));
 
 connect().catch(e => { console.error('[wa] startup failed', e); process.exit(1); });
