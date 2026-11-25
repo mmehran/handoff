@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: tests (${{ matrix.os }}, Node ${{ matrix.node }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [20, 22]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+
+  # scripts/autostart.sh and scripts\autostart.ps1, run for real: install, start, stop (stays off),
+  # start, restart, uninstall, checking the server answers or doesn't at each step
+  autostart:
+    name: autostart (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Configure a throwaway install
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/claude/projects" "$RUNNER_TEMP/claude/sessions"
+          HASH=$(node --input-type=module -e "import('./src/auth.js').then(m => console.log(m.hashPassword('ci-password-123')))")
+          printf 'HANDOFF_PASSWORD_HASH=%s\nHANDOFF_TUNNEL=none\nHANDOFF_PORT=7860\nHANDOFF_CLAUDE_HOME=%s\n' "$HASH" "$RUNNER_TEMP/claude" > .env
+      - name: Let user services run (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo loginctl enable-linger "$USER"
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do [ -S "/run/user/$(id -u)/bus" ] && break; sleep 1; done
+      - name: Linux and macOS
+        if: runner.os != 'Windows'
+        run: sh test/autostart-ci.sh
+      - name: Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./test/autostart-ci.ps1
