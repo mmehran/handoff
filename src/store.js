@@ -12,7 +12,8 @@ export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 const KEY_RE = /^[A-Za-z0-9._-]{1,255}$/;
 
 const TEXT_MAX = 20000, TOOL_RESULT_MAX = 4000, TOOL_INPUT_MAX = 3000;
-const clip = (s, n) => (s.length > n ? s.slice(0, n) + `\n… [${s.length - n} more chars]` : s);
+const clipText = (s, n) => (s.length > n ? s.slice(0, n) + `\n… [${s.length - n} more chars]` : s);
+const clip = clipText;
 
 async function readSlice(file, start, len) {
   const fh = await fsp.open(file, 'r');
@@ -29,8 +30,10 @@ function stripReminders(s) {
 }
 
 // Turn one transcript/stream-json record into zero or more display events.
-export function normalize(o, { sidechain = false } = {}) {
+// full: keep long texts whole (the API's chat view); the web app gets them cut at TEXT_MAX
+export function normalize(o, { sidechain = false, full = false } = {}) {
   const out = [];
+  const clip = full ? (s => s) : clipText;
   if (!o || typeof o !== 'object' || (o.isSidechain && !sidechain)) return out;
   const base = { uuid: o.uuid, ts: o.timestamp };
   if (o.type === 'user' && o.message) {
@@ -187,6 +190,21 @@ export class Store {
     return out.sort((a, b) => b.mtime - a.mtime);
   }
 
+  // Every transcript file, newest first, without reading any of them (for paging through all sessions)
+  async allSessions() {
+    let dirs = [];
+    try { dirs = (await fsp.readdir(this.projectsDir, { withFileTypes: true })).filter(d => d.isDirectory()); } catch { return []; }
+    const lists = await Promise.all(dirs.map(async d => {
+      const dir = path.join(this.projectsDir, d.name);
+      let files;
+      try { files = (await fsp.readdir(dir)).filter(f => f.endsWith('.jsonl') && UUID_RE.test(f.slice(0, -6))); } catch { return []; }
+      const stats = await Promise.all(files.map(f => fsp.stat(path.join(dir, f))
+        .then(st => ({ id: f.slice(0, -6), key: d.name, file: path.join(dir, f), mtime: st.mtimeMs, size: st.size }), () => null)));
+      return stats.filter(Boolean);
+    }));
+    return lists.flat().sort((a, b) => b.mtime - a.mtime);
+  }
+
   async sessionFile(id) {
     if (!UUID_RE.test(id)) return null;
     const cached = this.fileCache.get(id);
@@ -284,7 +302,7 @@ export class Store {
   }
 
   // Read display events from the end of a transcript, paging backwards via `before` (byte offset).
-  async readTranscript(id, before, maxBytes = 1024 * 1024) {
+  async readTranscript(id, before, maxBytes = 1024 * 1024, { full = false } = {}) {
     const file = await this.sessionFile(id);
     if (!file) return null;
     const size = (await fsp.stat(file)).size;
@@ -312,9 +330,43 @@ export class Store {
     const events = [];
     for (const line of text.split('\n')) {
       if (!line.trim()) continue;
-      try { events.push(...normalize(JSON.parse(line))); } catch { /* partial line */ }
+      try { events.push(...normalize(JSON.parse(line), { full })); } catch { /* partial line */ }
     }
     return { events, start, end: stop, size };
+  }
+
+  // The last `limit` events (those `keep` accepts) before byte offset `before` (null: the end), and the
+  // cursor for the page before them: the byte offset of the first line returned. Pages always break
+  // between lines, so no event is lost or repeated from one page to the next.
+  async readEvents(id, { before = null, limit = 100, full = false, keep = () => true } = {}) {
+    const file = await this.sessionFile(id);
+    if (!file) return null;
+    const size = (await fsp.stat(file)).size;
+    const end = before == null || !Number.isFinite(before) ? size : Math.min(Math.max(0, before), size);
+    for (let span = 256 * 1024; ; span *= 4) {
+      const start = Math.max(0, end - span);
+      const buf = await readSlice(file, start, end - start);
+      const lines = [];
+      let s = 0, nl;
+      while ((nl = buf.indexOf(10, s)) >= 0) { lines.push({ at: start + s, bytes: buf.subarray(s, nl) }); s = nl + 1; }
+      // the bytes after the last newline are a line still being written (left for later)
+      if (start > 0) lines.shift(); // probably cut off
+      const parsed = [];
+      let count = 0;
+      for (const l of lines) {
+        let o; try { o = JSON.parse(l.bytes.toString('utf8')); } catch { continue; }
+        const events = normalize(o, { full }).filter(keep);
+        if (events.length) { parsed.push({ at: l.at, events }); count += events.length; }
+      }
+      if (count < limit && start > 0 && span < 64 * 1024 * 1024) continue; // read further back
+      const out = [];
+      let i = parsed.length, n = 0;
+      while (i > 0 && n < limit) { i--; n += parsed[i].events.length; }
+      for (let j = i; j < parsed.length; j++) out.push(...parsed[j].events);
+      const first = parsed[i];
+      const more = i > 0 || (start > 0 && first) || (!first && start > 0);
+      return { events: out, before: more ? (first ? first.at : start) : null };
+    }
   }
 
   // The messages around the transcript line that starts at byte `offset` (a search hit), with that
@@ -435,7 +487,7 @@ function isAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 }
 
-function projectName(cwd) {
+export function projectName(cwd) {
   if (/scratch-workspaces/i.test(cwd)) return 'Desktop scratch · ' + cwd.split(/[\\/]/).pop();
   // a git worktree under <project>/.claude/worktrees/<name> (Handoff's or Claude Code's own)
   const wt = cwd.match(/([^\\/]+)[\\/]\.claude[\\/]worktrees[\\/]([^\\/]+)[\\/]?$/);

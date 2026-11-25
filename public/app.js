@@ -323,8 +323,9 @@ $('#menu').addEventListener('click', () => {
         try { await api('POST', '/api/notify/test'); toast('Test WhatsApp message sent'); }
         catch (x) { toast('WhatsApp: ' + x.message, 6000); }
       } }, '💬 Send test WhatsApp') : null,
+      h('button', { class: 'btn', onclick: () => { close(); showApiSettings(); } }, '🔑 API access…'),
       h('button', { class: 'btn', onclick: async () => { await api('POST', '/api/logout'); location.reload(); } }, '↪ Sign out'),
-      h('button', { class: 'btn danger', onclick: async () => { if (confirm('Sign out every device?')) { await api('POST', '/api/logout-all'); location.reload(); } } }, '⏻ Sign out all devices')));
+      h('button', { class: 'btn danger', onclick: () => { close(); signOutEverywhere(); } }, '⏻ Sign out all devices')));
 });
 
 // ---------- phone push notifications ----------
@@ -406,6 +407,206 @@ async function showAlertSettings() {
   };
   try { render(await api('GET', '/api/notify/prefs')); }
   catch (x) { box.replaceChildren(h('div', { class: 'empty' }, x.message)); }
+}
+
+// ---------- API access: the API's on/off switch, and its keys ----------
+const SCOPE_LABELS = { read: 'Read projects and chats', chat: 'Send prompts, start sessions', approve: 'Allow or deny requests, answer questions', files: 'Browse files and changes', git: 'Commit, push and discard' };
+const TOOL_LABELS = { all: 'All tools (approvals as set below)', readOnly: 'Read only: can look, can\'t change files', none: 'No tools: just talk' };
+const KEY_MODE_LABELS = { ...MODE_LABELS, manual: 'Ask me (approvals come to your phone)', dontAsk: 'Don\'t ask (deny anything not pre-approved)' };
+const PRESET_HELP = { phone: 'quick model, can read but not change files, plain-text answers', automation: 'does real work in your projects; approvals come to your phone', chat: 'just talks, for chat apps (OpenAI-compatible)', custom: 'choose everything yourself' };
+function copyBtn(text, label = 'Copy') {
+  const b = h('button', { class: 'btn sm', onclick: async () => {
+    try { await navigator.clipboard.writeText(typeof text === 'function' ? text() : text); b.textContent = 'Copied'; }
+    catch { b.textContent = 'Copy failed: select it'; }
+    setTimeout(() => { b.textContent = label; }, 1800);
+  } }, label);
+  return b;
+}
+const money = n => `$${(Number(n) || 0).toFixed(2)}`;
+
+async function showApiSettings() {
+  const box = h('div', { class: 'list' }, h('div', { class: 'muted small' }, 'Loading…'));
+  const close = openSheet('API access', box);
+  const say = (...kids) => box.replaceChildren(...kids);
+  let info;
+  // anything that hands out access asks again: the 2FA code, or the password when 2FA is off
+  const reauthField = () => (info.totp
+    ? h('input', { type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '6', placeholder: '2FA code', class: 'reauth' })
+    : h('input', { type: 'password', autocomplete: 'current-password', placeholder: 'Your Handoff password', class: 'reauth' }));
+  const reauthBody = el => (info.totp ? { code: el.value.trim() } : { password: el.value });
+  const base = () => info.base || `${location.origin}/api/v1`;
+  const load = async () => { info = await api('GET', '/api/keys'); render(); };
+
+  const keyCard = k => {
+    const secret = h('div', { class: 'row', hidden: true }, h('code', { class: 'grow mono small' }, k.webhookSecret), copyBtn(k.webhookSecret));
+    return h('div', { class: 'card keycard' },
+      h('div', { class: 't' }, h('span', {}, k.name), h('span', { class: 'chip' }, info.presets[k.preset]?.label || 'Custom'), k.expired ? h('span', { class: 'chip waiting' }, 'expired') : null),
+      h('div', { class: 's' }, `${k.prefix}… · ${k.scopes.join(', ')} · ${k.projects ? `${k.projects.length} project${k.projects.length === 1 ? '' : 's'}` : 'all projects'} · tools: ${k.tools}`),
+      h('div', { class: 's' }, `Last used ${k.lastUsedAt ? ago(k.lastUsedAt) : 'never'}${k.lastIp ? ` from ${k.lastIp}` : ''} · today ${k.today.turns} turn${k.today.turns === 1 ? '' : 's'}, ${money(k.today.costUsd)}${k.expiresAt ? ` · expires ${new Date(k.expiresAt).toLocaleDateString()}` : ''}`),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn sm', onclick: () => { secret.hidden = !secret.hidden; } }, 'Webhook secret'),
+        h('button', { class: 'btn sm', onclick: () => { close(); showKeyActivity(k); } }, 'Activity'),
+        h('button', { class: 'btn sm danger', onclick: async () => {
+          if (!confirm(`Revoke "${k.name}"? Programs using it stop working at once.`)) return;
+          try { await api('DELETE', `/api/keys/${k.id}`); toast('Key revoked'); await load(); } catch (x) { toast(x.message); }
+        } }, 'Revoke')),
+      secret);
+  };
+
+  const render = () => {
+    const toggleAuth = reauthField();
+    say(
+      h('div', {}, info.enabled ? '✅ The API is on.' : 'The API is off: programs get "api_off" until you turn it on.'),
+      h('div', { class: 'muted small' }, 'Your own programs, scripts and phone shortcuts can send prompts and get answers, pick sessions, attach files and more. Keys are for your own devices: sharing access to your Claude plan with other people can break its terms.'),
+      h('div', { class: 'row' }, toggleAuth, h('button', { class: info.enabled ? 'btn danger' : 'btn primary', onclick: async () => {
+        try { await api('POST', '/api/api-enabled', { on: !info.enabled, ...reauthBody(toggleAuth) }); toast(info.enabled ? 'The API is off' : 'The API is on'); await load(); }
+        catch (x) { toast(x.message, 5000); }
+      } }, info.enabled ? 'Turn the API off' : 'Turn the API on')),
+      h('div', { class: 'label' }, 'Address'),
+      h('div', { class: 'row' }, h('code', { class: 'grow mono small' }, base()), copyBtn(base())),
+      h('div', { class: 'row' },
+        h('a', { class: 'btn', href: '/api/v1/docs', target: '_blank', rel: 'noopener' }, '📖 API docs'),
+        h('a', { class: 'btn', href: '#/api', onclick: () => close() }, '🧪 Try it')),
+      h('div', { class: 'label' }, `Keys (${info.keys.length})`),
+      ...(info.keys.length ? info.keys.map(keyCard) : [h('div', { class: 'muted' }, 'No keys yet.')]),
+      h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: () => keyForm() }, '＋ New key')));
+  };
+
+  // the New key form: a preset fills it in, every field can still be changed
+  const keyForm = async () => {
+    const o = await optionsReady();
+    const name = h('input', { type: 'text', placeholder: 'A name, e.g. iPhone shortcut', maxlength: '60' });
+    const check = (label, on, title) => { const i = h('input', { type: 'checkbox' }); i.checked = !!on; return { i, el: h('label', { class: 'row', title }, i, h('span', {}, label)) }; };
+    const scopes = Object.fromEntries(info.scopes.map(s => [s, check(SCOPE_LABELS[s] || s, false, s === 'git' && !info.git ? 'Git actions are turned off in this Handoff (HANDOFF_GIT_ACTIONS)' : s === 'files' && !info.files ? 'The file browser is turned off in this Handoff (HANDOFF_FILE_BROWSER)' : '')]));
+    const allProjects = check('Every project', true);
+    const projects = info.projects.map(p => ({ cwd: p.cwd, ...check(`${p.name} · ${p.cwd}`, false) }));
+    const projectList = h('div', { class: 'list checks', hidden: true }, ...projects.map(p => p.el));
+    allProjects.i.addEventListener('change', () => { projectList.hidden = allProjects.i.checked; syncModes(); });
+    const tools = h('select', {}, ...info.tools.map(t => h('option', { value: t }, TOOL_LABELS[t] || t)));
+    const modes = Object.fromEntries(info.modes.map(m => [m, check(KEY_MODE_LABELS[m] || m, m === 'manual')]));
+    const defaultMode = h('select', {});
+    const warn = h('div', { class: 'notice small', hidden: true }, '⚠️ Auto and Bypass let Claude act without asking you. Such a key can do anything you can do on this computer.');
+    const syncModes = () => {
+      const allowAll = allProjects.i.checked;
+      for (const m of ['auto', 'bypassPermissions']) if (modes[m]) { modes[m].i.disabled = !allowAll; if (!allowAll) modes[m].i.checked = false; modes[m].el.title = allowAll ? '' : 'Only for keys with every project'; }
+      const chosen = info.modes.filter(m => modes[m].i.checked);
+      const prev = defaultMode.value;
+      defaultMode.replaceChildren(...chosen.map(m => h('option', { value: m, selected: m === prev }, KEY_MODE_LABELS[m] || m)));
+      warn.hidden = !chosen.some(m => m === 'auto' || m === 'bypassPermissions');
+    };
+    for (const m of info.modes) modes[m].i.addEventListener('change', syncModes);
+    const model = h('select', {}, h('option', { value: '' }, 'Claude Code\'s default model'), ...(o?.models || []).filter(m => m.value !== 'default').map(m => h('option', { value: m.value }, m.displayName)));
+    const effort = h('select', {}, h('option', { value: '' }, 'Default effort'), ...info.efforts.map(e => h('option', { value: e }, EFFORT_LABELS[e] || e)));
+    const plain = check('Plain text answers (no Markdown), for voice and short messages', false);
+    const language = h('input', { type: 'text', placeholder: 'Answer language, e.g. English or Urdu (optional)', maxlength: '40' });
+    const length = h('select', {}, h('option', { value: '' }, 'Answer length: Claude decides'), ...info.lengths.map(l => h('option', { value: l }, `Answer length: ${l}`)));
+    const alerts = check('Also alert my phone when its tasks finish or fail (approvals always alert)', false);
+    const num = (ph, v) => h('input', { type: 'text', inputmode: 'decimal', placeholder: ph, value: v ?? '' });
+    const rate = num('Requests a minute (30)', 30), turns = num('Turns at once (2)', 2), budget = num('Daily budget in USD (optional)');
+    const expires = h('select', {}, ...[['', 'Never expires'], ['30', 'Expires in 30 days'], ['90', 'Expires in 90 days'], ['365', 'Expires in a year']].map(([v, l]) => h('option', { value: v }, l)));
+    const help = h('div', { class: 'muted small' });
+    const seg = h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Kind of key' });
+    let preset = 'automation';
+    const apply = id => {
+      preset = id;
+      for (const b of seg.children) b.classList.toggle('on', b.dataset.id === id);
+      help.textContent = PRESET_HELP[id] || '';
+      const p = info.presets[id];
+      if (!p) return;
+      for (const s of info.scopes) scopes[s].i.checked = p.scopes.includes(s);
+      tools.value = p.tools;
+      for (const m of info.modes) modes[m].i.checked = p.modes.includes(m);
+      syncModes(); defaultMode.value = p.defaultMode;
+      model.value = p.defaults.model || ''; effort.value = p.defaults.effort || ''; plain.i.checked = !!p.defaults.plain;
+    };
+    for (const id of [...Object.keys(info.presets), 'custom']) {
+      seg.append(h('button', { type: 'button', 'data-id': id, onclick: () => apply(id) }, info.presets[id]?.label || 'Custom'));
+    }
+    const auth = reauthField();
+    const create = h('button', { class: 'btn primary', onclick: async () => {
+      const chosenProjects = allProjects.i.checked ? null : projects.filter(p => p.i.checked).map(p => p.cwd);
+      if (chosenProjects && !chosenProjects.length) return toast('Tick at least one project, or "Every project"');
+      create.disabled = true;
+      try {
+        const r = await api('POST', '/api/keys', {
+          name: name.value, preset, scopes: info.scopes.filter(s => scopes[s].i.checked), projects: chosenProjects,
+          tools: tools.value, modes: info.modes.filter(m => modes[m].i.checked), defaultMode: defaultMode.value,
+          defaults: { model: model.value || undefined, effort: effort.value || undefined, plain: plain.i.checked || undefined, language: language.value.trim() || undefined, length: length.value || undefined },
+          alerts: alerts.i.checked, rateLimit: rate.value, maxTurns: turns.value, dailyBudgetUsd: budget.value || undefined, expiresDays: expires.value || undefined,
+          ...reauthBody(auth)
+        });
+        showOnce(r);
+      } catch (x) { toast(x.message, 6000); create.disabled = false; }
+    } }, 'Create key');
+    say(
+      h('div', { class: 'label' }, 'New key'), name,
+      h('div', { class: 'label' }, 'Kind'), seg, help,
+      h('div', { class: 'label' }, 'It may'), h('div', { class: 'list checks' }, ...info.scopes.map(s => scopes[s].el)),
+      h('div', { class: 'label' }, 'Projects'), allProjects.el, projectList,
+      h('div', { class: 'label' }, 'Tools'), tools,
+      h('div', { class: 'label' }, 'When Claude wants to act'), h('div', { class: 'list checks' }, ...info.modes.map(m => modes[m].el)), defaultMode, warn,
+      h('div', { class: 'label' }, 'Answers'), model, effort, plain.el, language, length,
+      h('div', { class: 'label' }, 'Alerts and limits'), alerts.el, rate, turns, budget, expires,
+      h('div', { class: 'muted small' }, 'Keys are for your own programs and devices. Sharing access to your Claude plan with other people can break its terms.'),
+      h('div', { class: 'row' }, auth, create, h('button', { class: 'btn', onclick: () => render() }, 'Cancel')));
+    apply('automation');
+    name.focus();
+  };
+
+  // the key itself, shown this once
+  const showOnce = r => {
+    const k = r.key, b = base();
+    const curl = `curl ${b}/chat \\\n  -H "Authorization: Bearer ${k}" \\\n  -d '{"prompt": "What changed in my last commit?"}'`;
+    const py = `import requests\nr = requests.post("${b}/chat",\n    headers={"Authorization": "Bearer ${k}"},\n    json={"prompt": "What changed in my last commit?"})\nprint(r.json()["text"])`;
+    say(
+      h('div', {}, `🔑 "${r.record.name}" is ready. Copy the key now: it is shown only this once.`),
+      h('div', { class: 'row' }, h('code', { class: 'grow mono keyonce' }, k), copyBtn(k)),
+      h('div', { class: 'label' }, 'Webhook secret (to check webhooks this key\'s requests send)'),
+      h('div', { class: 'row' }, h('code', { class: 'grow mono small' }, r.record.webhookSecret), copyBtn(r.record.webhookSecret)),
+      ...(info.enabled ? [] : [h('div', { class: 'notice small' }, 'The API is off: turn it on in this sheet before using the key.')]),
+      h('div', { class: 'label' }, 'Try it with curl'), codeBlock(curl, 'bash'),
+      h('div', { class: 'label' }, 'Or Python'), codeBlock(py, 'python'),
+      h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: () => load() }, 'I\'ve saved it')));
+  };
+
+  try { await load(); } catch (x) { say(h('div', { class: 'empty' }, x.message)); }
+}
+
+// one key's recent calls: when, from where, what, how it went, how long, what it cost
+async function showKeyActivity(k) {
+  const box = h('div', { class: 'list' }, h('div', { class: 'muted small' }, 'Loading…'));
+  const errorsOnly = h('input', { type: 'checkbox' });
+  const close = openSheet(`Activity · ${k.name}`, h('label', { class: 'row' }, errorsOnly, h('span', {}, 'Errors only')), box);
+  const load = async () => {
+    try {
+      const { entries } = await api('GET', `/api/keys/${k.id}/activity?limit=200${errorsOnly.checked ? '&errors=1' : ''}`);
+      box.replaceChildren(...(entries.length ? entries.map(e => {
+        const bad = e.status >= 400 || e.turnStatus === 'error';
+        const what = e.action === 'api_turn' ? `turn ${e.turnStatus}${e.model ? ` · ${e.model}` : ''}${e.costUsd != null ? ` · ${money(e.costUsd)}` : ''}` : `${e.method} ${String(e.path || '').replace(/^\/api\/v1/, '')} → ${e.status}`;
+        return h('div', { class: `card act${bad ? ' bad' : ''}` },
+          h('div', { class: 't' }, h('span', { class: 'mono' }, what), e.ms != null ? h('span', { class: 'muted small' }, `${e.ms < 1000 ? e.ms + ' ms' : (e.ms / 1000).toFixed(1) + ' s'}`) : null),
+          h('div', { class: 's' }, `${ago(Date.parse(e.t))} · ${e.ip || ''}`, e.sessionId ? h('a', { href: `#/s/${e.sessionId}`, onclick: () => close() }, ` · chat ${e.sessionId.slice(0, 8)}`) : null),
+          e.text ? h('div', { class: 's' }, e.text) : null);
+      }) : [h('div', { class: 'muted' }, errorsOnly.checked ? 'No errors.' : 'No calls yet.')]));
+    } catch (x) { box.replaceChildren(h('div', { class: 'empty' }, x.message)); }
+  };
+  errorsOnly.addEventListener('change', load);
+  load();
+}
+
+// "Sign out everywhere", and optionally every API key too (a stolen cookie could have made one)
+async function signOutEverywhere() {
+  let keys = [];
+  try { keys = (await api('GET', '/api/keys')).keys; } catch { /* still sign out */ }
+  const revoke = h('input', { type: 'checkbox' });
+  const close = openSheet('Sign out everywhere',
+    h('div', { class: 'list' },
+      h('div', {}, 'Every device signed in to Handoff is signed out, this one too.'),
+      keys.length ? h('label', { class: 'row' }, revoke, h('span', {}, `Also revoke all ${keys.length} API key${keys.length === 1 ? '' : 's'}`)) : null,
+      h('div', { class: 'row' }, h('button', { class: 'btn danger', onclick: async () => {
+        await api('POST', '/api/logout-all', { revokeKeys: revoke.checked }).catch(() => {});
+        close(); location.reload();
+      } }, '⏻ Sign out everywhere'))));
 }
 
 // ---------- login ----------
@@ -672,6 +873,9 @@ function photoPicker() {
 // ---------- views ----------
 const base = p => String(p || '').split(/[\\/]/).filter(Boolean).pop() || p;
 // Cards for what is running now: sessions started from here, and Claude Code open on the laptop.
+// a session started from the API, and with which key
+const apiChip = via => (via ? h('span', { class: 'chip api', title: `Started from the API with the key "${via}"` }, `API · ${via}`) : null);
+
 async function liveCards(compact = false) {
   const d = await api('GET', '/api/live');
   const seen = new Set(), cards = [];
@@ -679,7 +883,7 @@ async function liveCards(compact = false) {
     if (!r.sessionId) continue;
     seen.add(r.sessionId);
     cards.push(h('a', { class: 'card', href: `#/s/${r.sessionId}` },
-      h('div', { class: 't' }, h('span', {}, r.title || 'Remote session'), h('span', { class: `chip ${r.status}` }, compact ? r.status : 'remote · ' + r.status)),
+      h('div', { class: 't' }, h('span', {}, r.title || 'Remote session'), apiChip(r.via), h('span', { class: `chip ${r.status}` }, compact ? r.status : 'remote · ' + r.status)),
       h('div', { class: 's' }, compact ? base(r.cwd) : r.cwd)));
   }
   for (const l of d.live) {
@@ -813,7 +1017,7 @@ async function projectView(key) {
     h('h2', {}, 'Sessions'), list);
   const sessions = await api('GET', `/api/projects/${encodeURIComponent(key)}/sessions`);
   list.replaceChildren(...sessions.map(s => h('a', { class: 'card', href: `#/s/${s.id}` },
-    h('div', { class: 't' }, s.title, s.run ? h('span', { class: `chip ${s.run}` }, 'remote ' + s.run) : s.live ? h('span', { class: `chip ${s.live}` }, s.live) : null),
+    h('div', { class: 't' }, s.title, apiChip(s.via), s.run ? h('span', { class: `chip ${s.run}` }, 'remote ' + s.run) : s.live ? h('span', { class: `chip ${s.live}` }, s.live) : null),
     h('div', { class: 's' }, `${ago(s.mtime)} · ${size(s.size)} · ${s.id.slice(0, 8)}`))));
   if (!sessions.length) list.replaceChildren(h('div', { class: 'empty' }, 'No sessions.'));
 }
@@ -1506,7 +1710,7 @@ async function sessionView(id, params = new URLSearchParams()) {
   state.cleanup.push(() => clearTimeout(actTimer));
   // pinned under the top bar, so status, actions and tabs stay in reach however far the chat scrolls
   const head = h('div', { class: 'session-head' },
-    h('div', { class: 'session-bar' }, status, h('div', { class: 'cwd mono', title: info.cwd || '' }, h('span', { dir: 'ltr' }, info.cwd || '')), findBtn, muteBtn, intBtn, stopBtn),
+    h('div', { class: 'session-bar' }, status, apiChip(info.via), h('div', { class: 'cwd mono', title: info.cwd || '' }, h('span', { dir: 'ltr' }, info.cwd || '')), findBtn, muteBtn, intBtn, stopBtn),
     settings, todoBox);
   const msgs = h('div', { id: 'msgs' });
   const working = h('div', { class: 'working', hidden: true }, h('span', { class: 'spinner' }), h('span', { class: 'wtext' }, 'Claude is working…'));

@@ -11,6 +11,7 @@ import { startTunnel, startNamedTunnel } from './tunnel.js';
 import { logToFile } from './logfile.js';
 import { checkServices, needsHttp, describeServices } from './services.js';
 import { maskNumber } from './notify.js';
+import { KeyStore } from './apikeys.js';
 
 // overrides: { web } turns a part on or off for this run, whatever .env says
 // logName: the file in data/ that --log-file writes to
@@ -19,7 +20,7 @@ export async function start({ web, logName = 'server.log' } = {}) {
 
   const cfg = loadConfig();
   if (web !== undefined) cfg.web = web;
-  const { errors, warnings } = checkServices(cfg);
+  const { errors, warnings } = checkServices(cfg, { apiKeys: cfg.api ? new KeyStore({ cfg }).count : 1 });
   if (errors.length) { for (const e of errors) console.error(e); process.exit(1); }
   for (const w of warnings) console.warn(`WARNING: ${w}`);
 

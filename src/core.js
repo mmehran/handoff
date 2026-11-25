@@ -16,6 +16,7 @@ import { PushService } from './push.js';
 import { Activity } from './activity.js';
 import { FolderPicker } from './folders.js';
 import { needsHttp } from './services.js';
+import { KeyStore } from './apikeys.js';
 
 export function createCore(cfg, { claudePath, log = console.log } = {}) {
   const store = new Store(cfg);
@@ -94,6 +95,9 @@ export function createCore(cfg, { claudePath, log = console.log } = {}) {
     searchTimer.unref?.();
   }
 
-  const stop = () => { clearTimeout(searchTimer); runner.shutdown(); notifier.stop(); };
-  return { cfg, store, runner, push, notifier, events, audit, answerQuestion, files, activity, folderPicker, search, stop, log };
+  // API keys (and what is remembered about their use); the web app manages them too
+  const keys = new KeyStore({ cfg });
+
+  const stop = () => { clearTimeout(searchTimer); runner.shutdown(); notifier.stop(); keys.flush(); };
+  return { cfg, store, runner, push, notifier, events, audit, answerQuestion, files, activity, folderPicker, search, keys, stop, log };
 }

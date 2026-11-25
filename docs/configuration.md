@@ -15,6 +15,18 @@ Handoff's parts can be used on their own or together; see [Choosing what to run]
 |---|---|---|
 | `HANDOFF_WEB` | `true` | The web app: browse and drive Claude Code from a browser, with phone notifications. `false` turns it off: no sign-in, no pages, and (unless another part needs it) no listening port and no tunnel. |
 | `HANDOFF_WHATSAPP_ENABLED` | `false` | WhatsApp alerts. See [WhatsApp](#whatsapp-optional) below. |
+| `HANDOFF_API` | `false` | The API at `/api/v1`, for your own programs. See [the API](#the-api) below and [docs/api.md](api.md). The web app can also turn it on and off (menu → API access). |
+
+## The API
+
+| Variable | Default | |
+|---|---|---|
+| `HANDOFF_API_DIR` | `~/Handoff chats` | Where sessions started without a project run, one folder per key, so they never land inside your projects. Made if missing; it must be inside `HANDOFF_ALLOWED_ROOTS` if that is set. |
+| `HANDOFF_API_IDLE_SECONDS` | `60` | Idle Claude processes the API started stop after this long, so they don't fill `HANDOFF_MAX_RUNS`. The next prompt resumes the session. |
+| `HANDOFF_API_UPLOAD_MB` | `20` | Largest file per upload (photos stay at 5 MB, as Claude accepts). |
+| `HANDOFF_API_CORS_ORIGINS` | empty | Websites allowed to call the API from a browser, comma-separated. Empty: none. |
+
+API keys aren't settings: make them with `node scripts/api-key.js create --name "…"` or in the web app (menu → API access). Only a hash of each key is kept, in `data/api-keys.json`.
 
 ## Sign-in
 
@@ -89,5 +101,7 @@ The Cloudflare **API** token is never stored. `npm run setup:domain` reads it fr
 | `data/audit.log` | Sign-ins, prompts, approvals and stops, one JSON object per line. |
 | `data/server.log` | Output when started with `--log-file` (autostart). `npm run whatsapp-only` writes `data/whatsapp-only.log` instead. |
 | `data/public-url.txt` | The current public address. |
+| `data/api-keys.json` | API keys: a SHA-256 of each key (never the key itself) and its settings. Mode `600`. |
+| `data/api-usage.json`, `data/api-sessions.json`, `data/api-turns.json` | Per key: use per day, the sessions it started, and a short note per turn. |
 
 Handoff never writes to `~/.claude`. The only exception is Claude Code itself, which records the sessions Handoff starts or resumes, just as it does for any session.

@@ -58,6 +58,11 @@ export function loadConfig() {
     claudeOauthToken: str('CLAUDE_CODE_OAUTH_TOKEN'), // optional, from `claude setup-token`; only for processes we start
     // the parts to run (see services.js); WhatsApp alerts are turned on by notify.enabled below
     web: bool('HANDOFF_WEB', true),                   // the web app: browse and drive Claude Code from a browser
+    api: bool('HANDOFF_API'),                         // the API at /api/v1, for programs (keys: scripts/api-key.js)
+    apiDir: path.resolve(str('HANDOFF_API_DIR', path.join(os.homedir(), 'Handoff chats'))), // sessions started without a project
+    apiIdleSeconds: num('HANDOFF_API_IDLE_SECONDS', 60), // idle Claude processes the API started stop after this long
+    apiUploadMb: num('HANDOFF_API_UPLOAD_MB', 20),    // largest file per upload
+    apiCors: list('HANDOFF_API_CORS_ORIGINS', ','),   // websites allowed to call the API from a browser
     passwordHash: str('HANDOFF_PASSWORD_HASH'),
     totpSecret,
     totpEnabled: !!totpSecret,

@@ -14,6 +14,13 @@ import { updateEnvFile, readEnvFile, loadConfig, ENV_FILE, DATA_DIR } from './co
 import { hashPassword, generateTotpSecret, verifyTotp, _resetTotpReplay } from './auth.js';
 import { askNumber, saveWhatsApp, whatsappNextSteps } from './setup-whatsapp.js';
 import { describeServices, SERVICES } from './services.js';
+import { KeyStore, PRESETS } from './apikeys.js';
+
+const PRESET_HELP = {
+  phone: 'quick model, can read but not change files, plain-text answers',
+  automation: 'does real work in your projects; approvals go to your phone',
+  chat: 'just talks, for chat apps (OpenAI-compatible)'
+};
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 let ended = false;
@@ -50,7 +57,7 @@ console.log('\n=== Handoff setup ===\n');
 const cfg = loadConfig();
 
 // ---------- which parts ----------
-let web = cfg.web, whatsapp = cfg.notify.enabled;
+let web = cfg.web, whatsapp = cfg.notify.enabled, api = cfg.api;
 const flag = process.argv.indexOf('--services');
 if (flag > 0) {
   const ids = String(process.argv[flag + 1] || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
@@ -61,20 +68,24 @@ if (flag > 0) {
   }
   web = ids.includes('web');
   whatsapp = ids.includes('whatsapp');
+  api = ids.includes('api');
 } else {
-  console.log('Handoff has two parts. Use either one, or both:');
+  console.log('Handoff has three parts. Use any one of them, or any mix:');
   console.log('  Web app          browse and drive Claude Code from your phone or any browser, with phone notifications');
-  console.log('  WhatsApp alerts  a WhatsApp message when a session needs you; reply to answer (needs Docker)\n');
+  console.log('  WhatsApp alerts  a WhatsApp message when a session needs you; reply to answer (needs Docker)');
+  console.log('  API              let your own programs, scripts and phone shortcuts send prompts and get answers\n');
   for (;;) {
     web = await yesNo('Use the web app?', cfg.web);
     if (web === null) stopped();
     whatsapp = await yesNo('Use WhatsApp alerts?', cfg.notify.enabled);
     if (whatsapp === null) stopped();
-    if (web || whatsapp) break;
+    api = await yesNo('Use the API?', cfg.api);
+    if (api === null) stopped();
+    if (web || whatsapp || api) break;
     console.log('Pick at least one of them.\n');
   }
 }
-const updates = { HANDOFF_WEB: web ? 'true' : 'false' };
+const updates = { HANDOFF_WEB: web ? 'true' : 'false', HANDOFF_API: api ? 'true' : 'false' };
 
 // ---------- the web app: password and 2FA ----------
 if (web) {
@@ -136,6 +147,25 @@ if (whatsapp) {
 } else {
   updates.HANDOFF_WHATSAPP_ENABLED = 'false'; // the number and token stay, for turning them on again later
 }
+
+// ---------- the API: a first key ----------
+const keyStore = new KeyStore({ cfg });
+let firstKey = null;
+if (api && !keyStore.count) {
+  console.log('\nPrograms use the API with a key.');
+  const make = await yesNo('Make a first API key now?', true);
+  if (make === null) stopped();
+  if (make) {
+    const names = Object.entries(PRESETS);
+    names.forEach(([id, p], i) => console.log(`  ${i + 1}. ${p.label}${id === 'automation' ? ' (default)' : ''}: ${PRESET_HELP[id]}`));
+    const pick = await ask(`Which kind of key? [1-${names.length}, Enter for ${names.findIndex(([id]) => id === 'automation') + 1}]: `);
+    if (pick === null) stopped();
+    const preset = names[Number(pick) - 1]?.[0] || 'automation';
+    const name = await ask('A name for it, e.g. "iPhone shortcut" [my first key]: ');
+    if (name === null) stopped();
+    firstKey = { name: name || 'my first key', preset };
+  }
+}
 rl.close();
 
 // ---------- save ----------
@@ -146,7 +176,9 @@ if (web) {
   fs.rmSync(path.join(DATA_DIR, 'sessions.json'), { force: true });
   console.log('All previously signed-in devices have been signed out.');
 }
-const now = { ...cfg, web, notify: { ...cfg.notify, enabled: whatsapp } };
+let madeKey = null;
+if (firstKey) madeKey = keyStore.create(firstKey);
+const now = { ...cfg, web, api, notify: { ...cfg.notify, enabled: whatsapp } };
 console.log(`\nSaved to ${path.relative(process.cwd(), ENV_FILE) || ENV_FILE}. Handoff will run: ${describeServices(now)}.`);
 console.log('\nNext:');
 if (web) {
@@ -161,6 +193,17 @@ if (web) {
       : `- The web app is reached through HANDOFF_TUNNEL=${tunnel}${host ? ` at https://${host}` : ''}.`);
 }
 if (whatsapp && waTo) for (const s of whatsappNextSteps(cfg)) console.log(s.startsWith(' ') ? `  ${s}` : `- ${s}`);
+if (api) {
+  const saved = { ...readEnvFile(), ...process.env };
+  const host = String(saved.HANDOFF_PUBLIC_HOSTNAME || '').trim();
+  const base = host ? `https://${host}/api/v1` : `http://127.0.0.1:${saved.HANDOFF_PORT || 7860}/api/v1 (or your tunnel's address)`;
+  console.log(`- The API answers at ${base}; its docs, with "Try it out", are at …/api/v1/docs. Guide: docs/api.md`);
+  if (madeKey) {
+    console.log(`- Your API key "${madeKey.record.name}" (${PRESETS[madeKey.record.preset]?.label || madeKey.record.preset}). It's shown only now, so copy it somewhere safe:\n\n    ${madeKey.key}\n`);
+  } else if (!keyStore.count) {
+    console.log('- Make an API key with:  node scripts/api-key.js create --name "my laptop"' + (web ? '   (or in the web app: menu → API access)' : ''));
+  }
+}
 console.log('- Start Handoff (or restart it) to use it:  npm start');
 console.log('  If it starts automatically:  powershell -ExecutionPolicy Bypass -File scripts\\autostart.ps1 restart   (Windows)');
 console.log('                               sh scripts/autostart.sh restart   (Linux, macOS)\n');

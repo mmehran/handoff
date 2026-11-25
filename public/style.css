@@ -494,3 +494,20 @@ pre, code, .mono, pre *, code * { font-variant-ligatures: none !important; } /* 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 10px; border: 2px solid var(--bg); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------- API access ---------- */
+.chip.api { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.chip.api::before { display: none; }
+.keycard .row { margin-top: 8px; }
+.keycard .s { white-space: normal; }
+.checks { gap: 4px; }
+.checks label.row { flex-wrap: nowrap; align-items: flex-start; font-size: 14px; }
+.checks label.row span { min-width: 0; overflow-wrap: anywhere; }
+label.row input[disabled] + span { opacity: .5; }
+code.keyonce { font-size: 13px; padding: 10px 12px; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--border); user-select: all; overflow-wrap: anywhere; }
+.ctx-sheet .seg { flex-wrap: wrap; }
+.card.act .t { font-weight: 500; }
+.card.act .t .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card.act.bad { border-color: color-mix(in srgb, var(--err) 45%, transparent); }
+.card.act .s { white-space: normal; }
+input.reauth { width: 12em; flex: none; }

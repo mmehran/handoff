@@ -1,10 +1,11 @@
 // The HTTP server, for the parts of Handoff that answer requests (see services.js). It always answers
-// the tunnel watchdog's /api/health, and hands everything else to the parts that are turned on:
-// today the web app (web.js). All of them share one core (core.js).
+// the tunnel watchdog's /api/health, sends /api/v1 to the API (api.js) and everything else to the web
+// app (web.js), when they are turned on. All of them share one core (core.js).
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { createCore } from './core.js';
 import { createWeb } from './web.js';
+import { createApi, API_PREFIX } from './api.js';
 import { UUID_RE } from './store.js';
 import { json } from './http-util.js';
 
@@ -21,6 +22,9 @@ const SECURITY_HEADERS = {
 
 export function createServer(cfg, { claudePath, log = console.log, core = createCore(cfg, { claudePath, log }) } = {}) {
   const web = cfg.web ? createWeb(core, { log }) : null;
+  // the API is always there to answer (with "api_off" while HANDOFF_API is off), so the web app can
+  // turn it on without a restart
+  const api = createApi(core, { log });
   // tunnel watchdog probe: random per-process id proves the public URL reaches *this* server
   const healthId = crypto.randomBytes(8).toString('hex');
 
@@ -29,6 +33,7 @@ export function createServer(cfg, { claudePath, log = console.log, core = create
     const url = new URL(req.url, 'http://x');
     try {
       if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true, id: healthId });
+      if (url.pathname === API_PREFIX || url.pathname.startsWith(API_PREFIX + '/')) return await api.handle(req, res, url);
       if (web) return await web.handle(req, res, url);
       json(res, 404, { error: 'not found' });
     } catch (e) {
@@ -40,7 +45,7 @@ export function createServer(cfg, { claudePath, log = console.log, core = create
   server.requestTimeout = 0; // SSE streams are long-lived
   server.headersTimeout = 20e3;
   server.on('close', () => core.stop());
-  return { server, core, runner: core.runner, store: core.store, sessions: web?.sessions || null, healthId };
+  return { server, core, api, runner: core.runner, store: core.store, sessions: web?.sessions || null, healthId };
 }
 
 export { UUID_RE };

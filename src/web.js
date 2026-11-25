@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { ROOT, DATA_DIR } from './config.js';
+import { ROOT, DATA_DIR, updateEnvFile } from './config.js';
+import { PRESETS, SCOPES, TOOL_PRESETS, LENGTHS } from './apikeys.js';
+import { EFFORTS } from './runner.js';
 import { verifyPassword, verifyTotp, SessionStore, LoginLimiter } from './auth.js';
 import { tailFile, normalize, UUID_RE } from './store.js';
 import { httpErr } from './runner.js';
@@ -18,7 +20,7 @@ const COOKIE = 'handoff_sid';
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json', '.png': 'image/png' };
 
 export function createWeb(core, { log = console.log } = {}) {
-  const { cfg, store, runner, notifier, push, audit, answerQuestion, files, activity, folderPicker, search } = core;
+  const { cfg, store, runner, notifier, push, audit, answerQuestion, files, activity, folderPicker, search, keys } = core;
   const sessions = new SessionStore(cfg);
   const limiter = new LoginLimiter();
   const globalClients = new Set();
@@ -117,14 +119,81 @@ export function createWeb(core, { log = console.log } = {}) {
     json(res, 200, { ok: true });
   });
 
-  route('POST', /^\/api\/logout-all$/, (req, res, ctx) => {
-    sessions.destroyAll(); audit(ctx.ip, 'logout_all');
-    json(res, 200, { ok: true });
+  route('POST', /^\/api\/logout-all$/, async (req, res, ctx) => {
+    const b = await readJson(req).catch(() => ({}));
+    sessions.destroyAll();
+    // API keys outlive sign-ins unless asked: a stolen browser cookie could have made one
+    const revoked = b.revokeKeys ? keys.revokeAll() : 0;
+    audit(ctx.ip, 'logout_all', { revokedKeys: revoked || undefined });
+    json(res, 200, { ok: true, revokedKeys: revoked });
+  });
+
+  // ---------- API keys (the API part, HANDOFF_API) ----------
+  // Anything that hands out access asks again: the 2FA code, or the password when 2FA is off.
+  const reauth = (b, ip) => {
+    if (limiter.blocked(ip)) throw httpErr(429, 'Too many attempts. Try again later.');
+    const ok = cfg.totpEnabled ? verifyTotp(cfg.totpSecret, String(b.code || '').trim()) : verifyPassword(String(b.password || ''), cfg.passwordHash);
+    if (!ok) {
+      limiter.fail(ip); audit(ip, 'reauth_failed');
+      throw httpErr(401, cfg.totpEnabled ? 'That 2FA code isn\'t right (or was just used: wait for the next one).' : 'That password isn\'t right.');
+    }
+    limiter.success(ip);
+  };
+  route('GET', /^\/api\/keys$/, async (req, res) => json(res, 200, {
+    enabled: !!cfg.api, totp: cfg.totpEnabled, keys: keys.list(),
+    presets: PRESETS, scopes: SCOPES, modes: keys.availableModes(), tools: TOOL_PRESETS, lengths: LENGTHS, efforts: EFFORTS,
+    git: !!cfg.gitActions, files: !!cfg.fileBrowser,
+    base: cfg.publicHostname ? `https://${cfg.publicHostname}/api/v1` : null,
+    projects: (await store.listProjects()).map(p => ({ cwd: p.cwd, name: p.name }))
+  }));
+  route('POST', /^\/api\/keys$/, async (req, res, ctx) => {
+    const b = await readJson(req);
+    reauth(b, ctx.ip);
+    const r = keys.create(b);
+    audit(ctx.ip, 'api_key_create', { keyId: r.record.id, name: r.record.name, scopes: r.record.scopes });
+    json(res, 200, r);
+  });
+  route('DELETE', /^\/api\/keys\/(key_[0-9a-f]{12})$/, (req, res, ctx, m) => {
+    const ok = keys.revoke(m[1]);
+    audit(ctx.ip, 'api_key_revoke', { keyId: m[1] });
+    json(res, ok ? 200 : 404, ok ? { ok } : { error: 'no such key' });
+  });
+  // one key's recent calls, newest first, from the audit log (and the older audit.log.1)
+  route('GET', /^\/api\/keys\/(key_[0-9a-f]{12})\/activity$/, async (req, res, ctx, m) => {
+    const limit = Math.min(Math.max(1, Number(ctx.url.searchParams.get('limit')) || 100), 500);
+    const errorsOnly = ctx.url.searchParams.get('errors') === '1';
+    const out = [];
+    const log = path.join(DATA_DIR, 'audit.log');
+    for (const f of [log, log + '.1']) {
+      let text = '';
+      try { text = await fsp.readFile(f, 'utf8'); } catch { continue; }
+      const lines = text.split('\n');
+      for (let i = lines.length - 1; i >= 0 && out.length < limit; i--) {
+        if (!lines[i].includes(m[1])) continue;
+        let e; try { e = JSON.parse(lines[i]); } catch { continue; }
+        if (e.keyId !== m[1]) continue;
+        if (errorsOnly && !(e.status >= 400 || e.turnStatus === 'error')) continue;
+        const { keyId, key, via, ...rest } = e;
+        out.push(rest);
+      }
+      if (out.length >= limit) break;
+    }
+    json(res, 200, { entries: out });
+  });
+  // turn the API on or off; written to .env, and in effect at once
+  route('POST', /^\/api\/api-enabled$/, async (req, res, ctx) => {
+    const b = await readJson(req);
+    reauth(b, ctx.ip);
+    const on = !!b.on;
+    updateEnvFile({ HANDOFF_API: on ? 'true' : 'false' });
+    cfg.api = on;
+    audit(ctx.ip, 'api_enabled', { on });
+    json(res, 200, { enabled: on });
   });
 
   // The settings the page is built with. `version` covers them and the page's own files: an open page
   // that reconnects and gets a different one (the server restarted with an update) reloads itself.
-  const pageSettings = () => ({ totp: cfg.totpEnabled, allowBypass: cfg.allowBypassPermissions, defaultMode: runner.normalizeMode(cfg.defaultPermissionMode), files: !!cfg.fileBrowser, git: !!cfg.gitActions, search: !!cfg.search, push: !!cfg.push });
+  const pageSettings = () => ({ totp: cfg.totpEnabled, allowBypass: cfg.allowBypassPermissions, defaultMode: runner.normalizeMode(cfg.defaultPermissionMode), files: !!cfg.fileBrowser, git: !!cfg.gitActions, search: !!cfg.search, push: !!cfg.push, api: !!cfg.api });
   const pageFiles = crypto.createHash('sha256');
   for (const f of fs.readdirSync(PUBLIC, { withFileTypes: true }).filter(f => f.isFile()).map(f => f.name).sort()) pageFiles.update(f).update(fs.readFileSync(path.join(PUBLIC, f)));
   const filesHash = pageFiles.digest('hex');
@@ -138,14 +207,14 @@ export function createWeb(core, { log = console.log } = {}) {
   route('GET', /^\/api\/projects\/([^/]+)\/sessions$/, async (req, res, ctx, m) => {
     const list = await store.listSessions(decodeURIComponent(m[1]));
     if (!list) return json(res, 404, { error: 'project not found' });
-    for (const s of list) { const r = runner.bySession(s.id); s.run = r ? r.status : null; }
+    for (const s of list) { const r = runner.bySession(s.id); s.run = r ? r.status : null; s.via = keys.sessionKey(s.id)?.keyName || null; }
     json(res, 200, list);
   });
 
   route('GET', /^\/api\/live$/, async (req, res) => {
     const titleOf = async id => (id && (await store.sessionInfo(id))?.title) || '';
     const live = await Promise.all((await store.liveSessions()).map(async l => ({ ...l, title: l.name || await titleOf(l.sessionId) })));
-    const runs = await Promise.all(runner.list().map(async r => ({ ...r, title: await titleOf(r.sessionId) })));
+    const runs = await Promise.all(runner.list().map(async r => ({ ...r, title: await titleOf(r.sessionId), via: keys.sessionKey(r.sessionId)?.keyName || null })));
     const ours = new Set(runs.map(r => r.sessionId));
     const others = live.filter(l => !ours.has(l.sessionId));
     for (const l of others) if (l.status === 'waiting') l.question = (await store.pendingQuestion(l.sessionId)) || null;
@@ -161,7 +230,8 @@ export function createWeb(core, { log = console.log } = {}) {
     json(res, 200, {
       ...(info || { id: m[1], cwd: run.cwd, title: 'New session' }),
       run: run ? runner.publicRun(run) : null,
-      question: (await store.pendingQuestion(m[1])) || null
+      question: (await store.pendingQuestion(m[1])) || null,
+      via: keys.sessionKey(m[1])?.keyName || null // started from the API, with this key
     });
   });
 
