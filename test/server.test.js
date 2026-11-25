@@ -423,3 +423,14 @@ test('push: the page gets the public key; only real push services can be subscri
   assert.equal((await req('GET', '/api/push')).json.devices, 0);
   assert.equal((await req('GET', '/api/me')).json.push, true);
 });
+
+test('the page loads its script and styles by versioned addresses, so no cache can serve old ones', async () => {
+  const html = await (await fetch(base + '/')).text();
+  const js = /src="\/app\.js\?v=([0-9a-f]{12})"/.exec(html), css = /href="\/style\.css\?v=([0-9a-f]{12})"/.exec(html);
+  assert.ok(js && css, html);
+  assert.equal(js[1], css[1]);
+  const r = await fetch(`${base}/app.js?v=${js[1]}`);
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get('content-type'), /javascript/);
+  assert.equal((await (await fetch(base + '/some/spa/route')).text()).includes(`/app.js?v=${js[1]}`), true);
+});
