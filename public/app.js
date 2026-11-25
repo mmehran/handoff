@@ -91,37 +91,174 @@ async function api(method, url, body) {
   return data;
 }
 
-// ---------- markdown (safe: builds DOM nodes) ----------
+// ---------- markdown (safe: builds DOM nodes, never HTML) ----------
+// Covers what Claude writes: headings, paragraphs, bold/italic/strike, inline code, links,
+// numbered, bulleted, nested and task lists, quotes, rules, tables and fenced code blocks.
+// Links only open http(s) and mailto addresses.
 function md(text) {
   const frag = document.createDocumentFragment();
-  const parts = String(text).split(/```[^\n]*\n?/);
-  parts.forEach((part, i) => {
-    if (i % 2 === 1) { frag.append(h('pre', {}, h('code', { text: part.replace(/\n$/, '') }))); return; }
-    let list = null;
-    for (const block of part.split(/\n{2,}/)) {
-      const lines = block.split('\n');
-      for (const line of lines) {
-        const li = line.match(/^\s*(?:[-*]|\d+\.)\s+(.*)/);
-        if (li) { if (!list) { list = h('ul'); frag.append(list); } list.append(h('li', {}, inline(li[1]))); continue; }
-        list = null;
-        const hd = line.match(/^(#{1,4})\s+(.*)/);
-        if (hd) { frag.append(h(hd[1].length <= 2 ? 'h3' : 'h4', {}, inline(hd[2]))); continue; }
-        if (line.trim()) { const p = h('p', {}, inline(line)); frag.append(p); }
-      }
+  const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+  let i = 0, para = [];
+  const flush = () => {
+    if (!para.length) return;
+    frag.append(h('p', {}, ...para.flatMap((l, k) => k ? [h('br'), ...inline(l)] : inline(l))));
+    para = [];
+  };
+  while (i < lines.length) {
+    const line = lines[i];
+    let m;
+    if ((m = FENCE_RE.exec(line))) { flush(); const r = fenced(lines, i, m); frag.append(r.node); i = r.next; continue; }
+    if (!line.trim()) { flush(); i++; continue; }
+    if ((m = /^\s{0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/.exec(line))) { flush(); frag.append(h('h' + Math.min(4, m[1].length), {}, inline(m[2]))); i++; continue; }
+    if (/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line)) { flush(); frag.append(h('hr')); i++; continue; }
+    if (/^\s{0,3}>/.test(line)) {
+      flush();
+      const q = [];
+      while (i < lines.length && /^\s{0,3}>/.test(lines[i])) q.push(lines[i++].replace(/^\s{0,3}>\s?/, ''));
+      frag.append(h('blockquote', {}, md(q.join('\n'))));
+      continue;
     }
-  });
+    if (line.includes('|') && i + 1 < lines.length && isTableRule(lines[i + 1])) { flush(); const r = table(lines, i); frag.append(r.node); i = r.next; continue; }
+    if (LIST_RE.test(line)) { flush(); i = list(lines, i, frag); continue; }
+    para.push(line.trim());
+    i++;
+  }
+  flush();
   return frag;
 }
+const FENCE_RE = /^(\s*)(`{3,}|~{3,})\s*([^\s`]*)/;
+const LIST_RE = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+const indentOf = s => s.match(/^\s*/)[0].replace(/\t/g, '    ').length;
+
+// ```lang … ``` (an unclosed fence runs to the end, as while Claude is still writing)
+function fenced(lines, i, m) {
+  const [, ind, fence, lang] = m;
+  const close = new RegExp(`^\\s*${fence[0] === '`' ? '`' : '~'}{${fence.length},}\\s*$`);
+  const body = [];
+  for (i++; i < lines.length && !close.test(lines[i]); i++) body.push(lines[i].startsWith(ind) ? lines[i].slice(ind.length) : lines[i].trimStart());
+  return { node: codeBlock(body.join('\n'), lang), next: i + 1 };
+}
+const LANG_ALIAS = { javascript: 'js', node: 'js', typescript: 'ts', python: 'py', py3: 'py', shell: 'sh', console: 'sh', terminal: 'sh', powershell: 'ps1', pwsh: 'ps1', ps: 'ps1', golang: 'go', rust: 'rs', ruby: 'rb', csharp: 'cs', 'c#': 'cs', 'c++': 'cpp', kotlin: 'kt', yml: 'yaml', jsonl: 'json' };
+function codeBlock(code, lang = '') {
+  const name = String(lang).toLowerCase();
+  const pre = h('pre', {}, h('code', {}, name === 'diff' || name === 'patch' ? diffLines(code) : highlight(code, LANG_ALIAS[name] || name)));
+  const copy = h('button', { class: 'btn sm', type: 'button', 'aria-label': 'Copy code', onclick: async () => {
+    try { await navigator.clipboard.writeText(code); copy.textContent = 'Copied'; }
+    catch { getSelection().selectAllChildren(pre); copy.textContent = 'Selected'; } // no clipboard access: select it for a manual copy
+    setTimeout(() => { copy.textContent = 'Copy'; }, 1500);
+  } }, 'Copy');
+  return h('div', { class: 'codeblock' }, h('div', { class: 'cb-head' }, h('span', {}, name || 'text'), copy), pre);
+}
+
+function diffLines(text) {
+  const frag = document.createDocumentFragment();
+  for (const line of text.split('\n')) {
+    const cls = line.startsWith('@@') ? 'd-hunk' : line.startsWith('+') ? 'd-add' : line.startsWith('-') ? 'd-del' : null;
+    frag.append(cls ? h('span', { class: cls }, line) : line, '\n');
+  }
+  return frag;
+}
+
+// | a | b |  then  |---|:--:|  then rows; scrolls sideways inside its own box on a phone
+const isTableRule = l => /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(l) && /-/.test(l) && (l.includes('|') || /^\s*:?-+:?\s*$/.test(l));
+function cells(line) {
+  let s = line.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|') && !s.endsWith('\\|')) s = s.slice(0, -1);
+  const out = []; let cur = '', code = false;
+  for (let k = 0; k < s.length; k++) {
+    const c = s[k];
+    if (c === '\\' && s[k + 1] === '|') { cur += '|'; k++; continue; }
+    if (c === '`') code = !code;
+    if (c === '|' && !code) { out.push(cur.trim()); cur = ''; continue; }
+    cur += c;
+  }
+  out.push(cur.trim());
+  return out;
+}
+function table(lines, i) {
+  const head = cells(lines[i]);
+  const align = cells(lines[i + 1]).map(c => /^:-+:$/.test(c) ? 'c' : /-+:$/.test(c) ? 'r' : null);
+  while (align.length < head.length) align.push(null);
+  const rows = [];
+  for (i += 2; i < lines.length && lines[i].trim() && lines[i].includes('|'); i++) rows.push(cells(lines[i]));
+  const width = Math.max(head.length, ...rows.map(r => r.length));
+  const cols = Array.from({ length: width }, (_, k) => k);
+  const node = h('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Table' }, h('table', {},
+    h('thead', {}, h('tr', {}, ...cols.map(k => h('th', { class: align[k] }, inline(head[k] ?? ''))))),
+    h('tbody', {}, ...rows.map(r => h('tr', {}, ...cols.map(k => h('td', { class: align[k] }, inline(r[k] ?? ''))))))));
+  return { node, next: i };
+}
+
+// - item / 1. item, nested by indent; indented lines and code blocks under an item belong to it
+function list(lines, i, frag) {
+  const stack = []; // { indent, el, li }
+  const startList = (indent, ordered, start, parent) => {
+    const el = h(ordered ? 'ol' : 'ul', { start: ordered && start !== 1 ? String(start) : null });
+    parent.append(el);
+    stack.push({ indent, el, li: null });
+  };
+  while (i < lines.length) {
+    const line = lines[i];
+    const m = LIST_RE.exec(line);
+    if (m && !/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
+      const indent = indentOf(m[1]), ordered = /\d/.test(m[2]);
+      while (stack.length && indent < stack[stack.length - 1].indent) stack.pop();
+      const top = stack[stack.length - 1];
+      if (!top) startList(indent, ordered, parseInt(m[2], 10), frag);
+      else if (indent >= top.indent + 2 && top.li) startList(indent, ordered, parseInt(m[2], 10), top.li);
+      else if ((top.el.tagName === 'OL') !== ordered) { // bullets after numbers (or the other way round): a new list
+        stack.pop();
+        startList(indent, ordered, parseInt(m[2], 10), stack.length ? stack[stack.length - 1].li : frag);
+      }
+      const cur = stack[stack.length - 1];
+      const task = /^\[([ xX])\]\s+(.*)$/.exec(m[3]);
+      cur.li = h('li', { class: task ? 'task' : null }, task ? [h('span', { class: 'check' }, task[1] === ' ' ? '☐' : '☑'), ' ', ...inline(task[2])] : inline(m[3]));
+      cur.el.append(cur.li);
+      i++;
+      continue;
+    }
+    if (!line.trim()) {
+      // a blank line ends the list unless the list (or an item's indented text) carries on after it
+      let j = i + 1;
+      while (j < lines.length && !lines[j].trim()) j++;
+      if (j < lines.length && (LIST_RE.test(lines[j]) || indentOf(lines[j]) >= 2) && stack.length) { i = j; continue; }
+      break;
+    }
+    const top = stack[stack.length - 1];
+    const fence = FENCE_RE.exec(line);
+    if (fence && top?.li && indentOf(line) >= 2) { const r = fenced(lines, i, fence); top.li.append(r.node); i = r.next; continue; }
+    // text right under an item (indented, or straight after it) continues that item
+    if (top?.li && !fence && !/^\s{0,3}(#{1,6}\s|>)/.test(line) && !(line.includes('|') && isTableRule(lines[i + 1] || ''))) {
+      if (indentOf(line) >= 2 || !/^\s*$/.test(lines[i - 1] || '')) { top.li.append(h('br'), ...inline(line.trim())); i++; continue; }
+    }
+    break;
+  }
+  return i;
+}
+
+// **bold**, *italic*, ~~strike~~, `code`, [text](https://…), bare https://… links, \escapes
+const INLINE_RE = /\\([!-/:-@[-`{-~])|(`+)(.+?)\2(?!`)|\*\*(?=\S)(.+?)\*\*|(^|[^\w])__(?=\S)(.+?)__(?!\w)|~~(.+?)~~|\[([^\]\n]+)\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)|(^|[^\w*])\*(?=\S)([^*\n]*?\S)\*(?![\w*])|(^|[^\w])_(?=\S)([^_\n]*?\S)_(?!\w)|(https?:\/\/[^\s<>]*[^\s<>.,;:!?'")\]*_])/g;
+const safeHref = u => /^(https?:\/\/|mailto:)/i.test(u) ? u : null;
 function inline(s) {
-  const out = [];
-  const re = /(`[^`]+`|\*\*[^*]+\*\*)/g;
+  const out = [], re = new RegExp(INLINE_RE.source, 'g');
   let last = 0, m;
   while ((m = re.exec(s))) {
-    if (m.index > last) out.push(s.slice(last, m.index));
-    out.push(m[0][0] === '`' ? h('code', { text: m[0].slice(1, -1) }) : h('b', { text: m[0].slice(2, -2) }));
+    let at = m.index, node;
+    if (m[1] != null) node = m[1];
+    else if (m[3] != null) node = h('code', { text: /^ .* $/.test(m[3]) ? m[3].slice(1, -1) : m[3] });
+    else if (m[4] != null) node = h('strong', {}, inline(m[4]));
+    else if (m[6] != null) { at += m[5].length; node = h('strong', {}, inline(m[6])); }
+    else if (m[7] != null) node = h('del', {}, inline(m[7]));
+    else if (m[8] != null) { const href = safeHref(m[9]); node = href ? h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, inline(m[8])) : h('span', {}, inline(m[8])); }
+    else if (m[11] != null) { at += m[10].length; node = h('em', {}, inline(m[11])); }
+    else if (m[13] != null) { at += m[12].length; node = h('em', {}, inline(m[13])); }
+    else if (m[14] != null) node = h('a', { href: m[14], target: '_blank', rel: 'noopener noreferrer' }, m[14]);
+    if (at > last) out.push(s.slice(last, at));
+    out.push(node);
     last = m.index + m[0].length;
   }
-  out.push(s.slice(last));
+  if (last < s.length) out.push(s.slice(last));
   return out;
 }
 
@@ -939,6 +1076,11 @@ async function sessionView(id, params = new URLSearchParams()) {
   const tools = new Map(), questions = new Map(), seen = new Set(), pending = [];
   const keyOf = e => e.uuid ? `${e.uuid}:${e.kind}:${e.id || e.toolUseId || ''}:${(e.text || '').length}` : null;
   const nearBottom = () => innerHeight + scrollY >= document.body.scrollHeight - 160;
+  // tool rows name files inside the project by their path from the project folder
+  const inProject = s => {
+    const root = String(info.cwd || '').replace(/[\\/]+$/, '');
+    return root && s.length > root.length && s.slice(0, root.length).toLowerCase() === root.toLowerCase() && /[\\/]/.test(s[root.length]) ? s.slice(root.length + 1) : s;
+  };
   const render = (e) => {
     if (e.kind === 'user') {
       const t = e.text.trim();
@@ -954,7 +1096,7 @@ async function sessionView(id, params = new URLSearchParams()) {
       return card;
     }
     if (e.kind === 'tool_use') {
-      const d = h('details', { class: 'tool' }, h('summary', {}, h('b', {}, e.name), ' ', e.summary || ''), h('div', { class: 'label' }, 'input'), h('pre', { text: e.input }));
+      const d = h('details', { class: 'tool' }, h('summary', {}, h('b', {}, e.name), ' ', inProject(e.summary || '')), h('div', { class: 'label' }, 'input'), h('pre', { text: e.input }));
       tools.set(e.id, d);
       return d;
     }
