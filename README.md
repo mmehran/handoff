@@ -49,6 +49,7 @@ Also useful:
 - [Configuration reference](docs/configuration.md): every `.env` setting
 - [Start automatically](docs/autostart.md) on Windows, macOS or Linux
 - [Security model](docs/security.md)
+- [Contributing](CONTRIBUTING.md) and the [changelog](CHANGELOG.md)
 
 ## Quick start
 
