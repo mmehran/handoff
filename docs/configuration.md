@@ -46,6 +46,8 @@ The Cloudflare **API** token is never stored. `npm run setup:domain` reads it fr
 | `HANDOFF_DEFAULT_MODE` | `manual` | Permission mode for sessions started from the phone: `manual` (ask before tools), `acceptEdits`, `plan`, `auto`, `dontAsk`. |
 | `HANDOFF_ALLOW_BYPASS` | `false` | Offer `bypassPermissions` (no approvals at all) in the mode menu. |
 | `HANDOFF_ALLOWED_ROOTS` | empty | Only allow new sessions inside these folders, and only browse files inside them. Separator: `;` on Windows, `:` on macOS/Linux. Empty = any existing folder. |
+| `HANDOFF_PUSH` | `true` | Phone push notifications. Each device turns them on from the ⋮ menu → **Phone notifications**; nothing is sent until one does. `false` removes the option. |
+| `HANDOFF_PUSH_CONTACT` | `https://<public hostname>` | Contact (`mailto:` or `https:` URL) given to the browsers' push services with each message, as Web Push requires. |
 | `HANDOFF_SEARCH` | `true` | Full-text search across chats. Keeps a text-only index of prompts and replies in `data/search/` (about 1% of the transcripts' size). `false` turns search off. |
 | `HANDOFF_AUDIT_TEXT` | `true` | Record the first 200 characters of each prompt and typed answer in `data/audit.log`. `false` keeps only who did what and when. |
 | `HANDOFF_FILE_BROWSER` | `false` | Adds **Files** and **Changes** tabs to every session: browse and search its project folder, open text, code (coloured) and images, download files, and see uncommitted git changes with diffs. All read-only. See [security](security.md#files-tab). |

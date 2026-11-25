@@ -30,7 +30,8 @@ const sameFolder = process.platform === 'win32' ? s => String(s).toLowerCase() :
 
 export class Notifier {
   // prefsFile: where muted projects are kept (data/notify.json)
-  constructor(cfg, { store, runner, log = console.log, send, onAnswer, onApproval, onLinkChange, prefsFile, now = () => new Date() } = {}) {
+  // push: a PushService; alerts also go to phones that turned on push notifications
+  constructor(cfg, { store, runner, log = console.log, send, onAnswer, onApproval, onLinkChange, prefsFile, push = null, now = () => new Date() } = {}) {
     this.cfg = cfg;
     this.store = store;
     this.runner = runner;
@@ -49,6 +50,7 @@ export class Notifier {
     this.openPerm = null;    // the approval a WhatsApp yes/no would answer
     this.inboxSince = 0;
     this.now = now;
+    this.push = push;
     this.quiet = parseQuiet(cfg.notify?.quiet);
     if (cfg.notify?.quiet && !this.quiet) log(`[notify] ignoring HANDOFF_WHATSAPP_QUIET="${cfg.notify.quiet}": use HH:MM-HH:MM, e.g. 23:00-07:00`);
     this.quietAllow = new Set(cfg.notify?.quietAllow || []);
@@ -67,7 +69,7 @@ export class Notifier {
   }
   prefs() {
     return {
-      enabled: this.on, quiet: this.quiet ? { text: this.quiet.text, active: inQuiet(this.quiet, this.now()), allow: [...this.quietAllow] } : null,
+      enabled: this.on || !!this.push, quiet: this.quiet ? { text: this.quiet.text, active: inQuiet(this.quiet, this.now()), allow: [...this.quietAllow] } : null,
       muted: [...this.muted.values()], held: this.held.length
     };
   }
@@ -90,16 +92,24 @@ export class Notifier {
       lines.push(`${label}: ${names.join(', ')}${ids.length > 6 ? ` and ${ids.length - 6} more` : ''}`);
     }
     const link = this.cfg.publicHostname ? `\n\nOpen: https://${this.cfg.publicHostname}/` : '';
-    this.send(`*🌙 While quiet hours were on (${this.quiet?.text || ''})*\n${lines.join('\n')}${link}`)
-      .then(() => this.log(`[notify] sent the quiet-hours summary (${held.length} alert${held.length === 1 ? '' : 's'})`))
-      .catch(e => this.log(`[notify] WhatsApp send failed (quiet-hours summary): ${e.message}`));
+    const title = `🌙 While quiet hours were on (${this.quiet?.text || ''})`;
+    if (this.on) {
+      this.send(`*${title}*\n${lines.join('\n')}${link}`)
+        .then(() => this.log(`[notify] sent the quiet-hours summary (${held.length} alert${held.length === 1 ? '' : 's'})`))
+        .catch(e => this.log(`[notify] WhatsApp send failed (quiet-hours summary): ${e.message}`));
+    }
+    if (this.push?.has()) this.push.send({ title, body: lines.join('\n'), url: '/', tag: 'quiet-summary' }).catch(() => {});
   }
+
+  // anything to send to: WhatsApp set up, or a phone subscribed to push notifications
+  get active() { return this.on || !!this.push?.has(); }
 
   get on() { return !!(this.cfg.notify?.enabled && this.cfg.notify.token && this.cfg.notify.to); }
   wants(kind) { return this.cfg.notify?.events?.[kind] !== false; }
 
   start() {
-    if (!this.on) return this;
+    // phones can subscribe to push at any time, so watch sessions whenever push is available
+    if (!this.on && !this.push) return this;
     this.runner.on('permission', p => {
       this.openPerm = { id: p.id, sessionId: p.sessionId, at: Date.now() };
       this.event('approval', p.sessionId, {
@@ -113,11 +123,12 @@ export class Notifier {
     });
     this.timer = setInterval(() => this.scan(), 3000);
     this.timer.unref?.();
+    this.scan();
+    if (!this.on) return this; // the rest is WhatsApp only
     this.inbox = setInterval(() => this.pollInbox().catch(() => {}), 4000);
     this.inbox.unref?.();
     this.linkTimer = setInterval(() => this.checkLink(), 30e3);
     this.linkTimer.unref?.();
-    this.scan();
     this.checkLink();
     this.log(`[notify] WhatsApp notifications on -> ${maskNumber(this.cfg.notify.to)}`);
     return this;
@@ -257,7 +268,7 @@ export class Notifier {
   }
 
   event(kind, sessionId, { detail = '', cwd = '', title = '', force = false } = {}) {
-    if (!this.on || !this.wants(kind) || !sessionId) return false;
+    if (!this.active || !this.wants(kind) || !sessionId) return false;
     if (this.isMuted(cwd)) return false;
     if (inQuiet(this.quiet, this.now()) && !this.quietAllow.has(kind)) {
       this.held.push({ kind, sessionId, title, cwd, at: Date.now() });
@@ -270,10 +281,14 @@ export class Notifier {
     if (this.sent.length >= MAX_PER_MINUTE) return false;
     this.last.set(key, t); this.sent.push(t);
     // the rate limits above are decided at once; the message is built (reading the transcript) and sent after
-    this.compose(kind, sessionId, { detail, cwd, title })
-      .then(text => this.send(text))
-      .then(() => this.log(`[notify] sent ${kind} for ${sessionId.slice(0, 8)}`))
-      .catch(e => this.log(`[notify] WhatsApp send failed (${kind}): ${e.message}`));
+    const urgent = kind === 'approval' || kind === 'question';
+    this.compose(kind, sessionId, { detail, cwd, title }).then(m => {
+      if (this.on) {
+        this.send(m.text).then(() => this.log(`[notify] sent ${kind} for ${sessionId.slice(0, 8)}`))
+          .catch(e => this.log(`[notify] WhatsApp send failed (${kind}): ${e.message}`));
+      }
+      if (this.push?.has()) this.push.send(m.push, { urgent }).catch(e => this.log(`[push] ${e.message}`));
+    });
     return true;
   }
 
@@ -286,7 +301,9 @@ export class Notifier {
     const link = this.cfg.publicHostname ? `https://${this.cfg.publicHostname}/#/s/${sessionId}` : '';
     const text = [`*${head}*`, `Session: ${name}`, project && `Project: ${project}`, detail && '', detail, link && '', link && `Open: ${link}`]
       .filter(x => x !== false && x !== undefined && x !== null).join('\n').replace(/\n{3,}/g, '\n\n');
-    return text;
+    // a phone notification: shorter, no WhatsApp reply instructions, opens the chat when tapped
+    const pushBody = [`${name}${project ? ` · ${project}` : ''}`, detail.replace(/\n\nReply \*yes\*[\s\S]*$/, '').replace(/\nReply with the number[\s\S]*$/, '').replace(/\*/g, '')].filter(Boolean).join('\n');
+    return { text, push: { title: head, body: pushBody, url: `/#/s/${sessionId}`, tag: `${sessionId}:${kind}` } };
   }
 
   async sendWhatsApp(text) {

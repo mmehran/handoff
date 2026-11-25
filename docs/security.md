@@ -47,6 +47,13 @@ Off by default. With `HANDOFF_FILE_BROWSER=true`, every session gets a read-only
 - Every file opened, downloaded or diffed is recorded in the audit log (`file_view`, `file_download`, `diff_view`).
 - `HANDOFF_ALLOWED_ROOTS` limits the Files tab too.
 
+## Phone notifications
+
+- Handoff signs each push with its own key pair (VAPID, RFC 8292), made on first start and kept in `data/push-keys.json`.
+- Every message is encrypted for the receiving device (RFC 8291, aes128gcm). The push service (Google, Apple, Mozilla or Microsoft) carries it but can't read it.
+- Subscriptions are only accepted for those push services (an allow-list of their hostnames, HTTPS only), so a stored subscription can't make the server call other addresses. They're kept in `data/push-subscriptions.json`, and devices the push service reports as gone are removed.
+- Turning notifications on or off is recorded in the audit log.
+
 ## Photos
 
 Photos sent with a prompt are checked (JPEG, PNG, GIF or WebP, the bytes must match, at most 4 of 5 MB each). Sessions Handoff runs get them as image blocks in the prompt, and they aren't stored anywhere else. For a session open on the computer they're saved in its project folder under `.handoff-uploads/`, which has its own `.gitignore` so git ignores it, and are deleted after a week.

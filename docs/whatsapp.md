@@ -2,6 +2,8 @@
 
 Get a WhatsApp message when any Claude Code session on your computer needs you. That covers Claude Desktop, the terminal, IDEs, and sessions started from Handoff. You can reply right in the chat.
 
+Don't want to set up WhatsApp? **Phone notifications** (⋮ menu → Phone notifications) send the same alerts as push notifications, with nothing to install. On iPhone, add Handoff to the Home Screen first and open it from there.
+
 WhatsApp is **off by default**. Handoff works without it, and nothing related to WhatsApp runs until you set it up.
 
 > Want only the alerts, with no web UI and no tunnel? See [WhatsApp-only mode](whatsapp-only.md). It uses the same setup, steps 1 to 4 below.

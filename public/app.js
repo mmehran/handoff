@@ -137,6 +137,7 @@ function setTop(title, backHref) {
 $('#menu').addEventListener('click', () => {
   const sheet = h('div', { class: 'list' },
     h('button', { class: 'btn', onclick: () => { location.hash = '#/new'; close(); } }, '+ New session'),
+    state.me?.push ? h('button', { class: 'btn', onclick: () => { close(); showPushSettings(); } }, 'Phone notifications…') : null,
     state.me?.whatsapp?.enabled ? h('button', { class: 'btn', onclick: () => { close(); showAlertSettings(); } }, 'WhatsApp alerts…') : null,
     h('button', { class: 'btn', onclick: async () => {
       try { await api('POST', '/api/notify/test'); toast('Test WhatsApp message sent'); }
@@ -151,6 +152,64 @@ $('#menu').addEventListener('click', () => {
   ps.replaceChildren(wrap); ps.hidden = false; ps.dataset.kind = 'menu';
   function close() { ps.dataset.kind = ''; renderPerms(); }
 });
+
+// ---------- phone push notifications ----------
+// Each device opts in here; the server then sends the same alerts as WhatsApp to it. On iPhone this
+// works once Handoff is added to the Home Screen and opened from there (iOS 16.4+).
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const pushRegistration = () => navigator.serviceWorker.register('/sw.js');
+async function showPushSettings() {
+  const box = h('div', { class: 'list' }, h('div', { class: 'muted small' }, 'Loading…'));
+  const close = () => { overlay.remove(); removeEventListener('keydown', onKey); };
+  const onKey = e => { if (e.key === 'Escape') close(); };
+  const overlay = h('div', { class: 'overlay', onclick: e => { if (e.target === overlay) close(); } },
+    h('div', { class: 'ctx-sheet', role: 'dialog', 'aria-label': 'Phone notifications' },
+      h('div', { class: 'row' }, h('b', {}, 'Phone notifications'), h('span', { class: 'grow' }), h('button', { class: 'icon', 'aria-label': 'Close', onclick: close }, '×')), box));
+  document.body.append(overlay);
+  addEventListener('keydown', onKey);
+  const say = (...kids) => box.replaceChildren(...kids);
+  const render = async () => {
+    if (!pushSupported()) {
+      return say(h('div', {}, 'This browser can\'t receive push notifications.'),
+        h('div', { class: 'muted small' }, 'On iPhone or iPad: tap Share → Add to Home Screen, open Handoff from the Home Screen, and come back here.'));
+    }
+    const info = await api('GET', '/api/push');
+    if (!info.enabled) return say(h('div', { class: 'muted' }, 'Push notifications are turned off on the server (HANDOFF_PUSH=false).'));
+    const reg = await pushRegistration();
+    const sub = await reg.pushManager.getSubscription();
+    const devices = h('div', { class: 'small muted' }, `${info.devices} device${info.devices === 1 ? '' : 's'} get${info.devices === 1 ? 's' : ''} notifications.`);
+    if (Notification.permission === 'denied') {
+      return say(h('div', {}, 'Notifications are blocked for this site.'), h('div', { class: 'muted small' }, 'Allow them in the browser\'s site settings, then come back here.'), devices);
+    }
+    if (sub) {
+      return say(h('div', {}, '🔔 On for this device: you get the same alerts as WhatsApp (approvals, questions, waiting, finished, errors). Quiet hours and muted projects apply.'),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn', onclick: async () => {
+            try { const r = await api('POST', '/api/push/test', { endpoint: sub.endpoint }); toast(r.sent ? 'Test notification sent' : 'Could not deliver it; try turning notifications off and on again', 5000); }
+            catch (x) { toast(x.message); }
+          } }, 'Send a test'),
+          h('button', { class: 'btn danger', onclick: async () => {
+            await api('POST', '/api/push/unsubscribe', { endpoint: sub.endpoint }).catch(() => {});
+            await sub.unsubscribe().catch(() => {});
+            render();
+          } }, 'Turn off for this device')),
+        devices);
+    }
+    say(h('div', {}, 'Get alerts on this device as notifications, even when Handoff is closed. No WhatsApp needed.'),
+      h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: async () => {
+        try {
+          if (await Notification.requestPermission() !== 'granted') return render();
+          const key = Uint8Array.from(atob(info.publicKey.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+          const s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+          await api('POST', '/api/push/subscribe', { subscription: s.toJSON() });
+          toast('Notifications are on for this device');
+          render();
+        } catch (x) { toast('Could not turn them on: ' + x.message, 6000); }
+      } }, 'Turn on for this device')),
+      devices);
+  };
+  try { await render(); } catch (x) { say(h('div', { class: 'empty' }, x.message)); }
+}
 
 // ---------- WhatsApp alert settings: quiet hours and muted projects ----------
 const sameDir = (a, b) => String(a).toLowerCase() === String(b).toLowerCase(); // the server compares case-insensitively on Windows
@@ -1050,6 +1109,7 @@ async function boot() {
   try { state.me = await api('GET', '/api/me'); }
   catch { return; }
   showWhatsApp(state.me.whatsapp);
+  if (state.me.push && pushSupported()) pushRegistration().catch(() => {});
   optionsReady(); // start fetching the model list early
   connectEvents();
   route();

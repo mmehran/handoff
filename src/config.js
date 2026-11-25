@@ -64,7 +64,9 @@ export function loadConfig() {
     rememberDays: num('HANDOFF_REMEMBER_DAYS', 30), // "Remember me" sign-ins last this long; 0 hides the option
     fileBrowser: bool('HANDOFF_FILE_BROWSER'),       // read-only Files tab in every session
     auditText: bool('HANDOFF_AUDIT_TEXT', true),
-    search: bool('HANDOFF_SEARCH', true),            // full-text search across chats (keeps a text index in data/search)     // false: the audit log leaves out what prompts and answers said
+    search: bool('HANDOFF_SEARCH', true),
+    push: bool('HANDOFF_PUSH', true),                 // phone push notifications (each device opts in from the web app)
+    pushContact: str('HANDOFF_PUSH_CONTACT'),          // mailto: or https: contact for push services; default https://<public hostname>            // full-text search across chats (keeps a text index in data/search)     // false: the audit log leaves out what prompts and answers said
     defaultPermissionMode: str('HANDOFF_DEFAULT_MODE', 'manual'),
     allowBypassPermissions: bool('HANDOFF_ALLOW_BYPASS'),
     allowedRoots: list('HANDOFF_ALLOWED_ROOTS', path.delimiter).map(p => path.resolve(p)), // empty = any folder

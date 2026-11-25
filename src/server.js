@@ -14,6 +14,7 @@ import { rotate } from './logfile.js';
 import { SearchIndex } from './search.js';
 import { changes, diff } from './changes.js';
 import { parseImages, saveForLiveSession } from './attachments.js';
+import { PushService } from './push.js';
 
 const PUBLIC = path.join(ROOT, 'public');
 const COOKIE = 'handoff_sid';
@@ -54,8 +55,15 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
   const routes = [];
   const route = (method, pattern, handler, opts = {}) => routes.push({ method, pattern, handler, ...opts });
 
-  // WhatsApp notifications (approval needed / waiting / finished / error)
+  // Phone push notifications: each device opts in from the web app (menu -> Phone notifications)
+  const push = cfg.push ? new PushService({
+    dataDir: DATA_DIR, log,
+    contact: cfg.pushContact || (cfg.publicHostname ? `https://${cfg.publicHostname}` : 'mailto:handoff@example.com')
+  }) : null;
+
+  // WhatsApp notifications (approval needed / waiting / finished / error), and push to phones
   const notifier = new Notifier(cfg, {
+    push,
     store, runner, log,
     // replies typed on WhatsApp take the same path as taps in the web UI
     onAnswer: (sessionId, pick) => answerQuestion(sessionId, pick, 'whatsapp'),
@@ -65,6 +73,26 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
     prefsFile: path.join(DATA_DIR, 'notify.json') // projects muted from the web app
   }).start();
   route('GET', /^\/api\/notify\/prefs$/, (req, res) => json(res, 200, notifier.prefs()));
+  const needPush = () => { if (!push) throw httpErr(404, 'push notifications are turned off (HANDOFF_PUSH)'); return push; };
+  route('GET', /^\/api\/push$/, (req, res) => json(res, 200, push ? { enabled: true, publicKey: push.publicKey, devices: push.subs.length } : { enabled: false }));
+  route('POST', /^\/api\/push\/subscribe$/, async (req, res, ctx) => {
+    const b = await readJson(req);
+    needPush().subscribe(b.subscription, req.headers['user-agent']);
+    audit(ctx.ip, 'push_subscribe', { ua: String(req.headers['user-agent'] || '').slice(0, 120) });
+    json(res, 200, { ok: true, devices: push.subs.length });
+  });
+  route('POST', /^\/api\/push\/unsubscribe$/, async (req, res, ctx) => {
+    const b = await readJson(req);
+    needPush().unsubscribe(String(b.endpoint || ''));
+    audit(ctx.ip, 'push_unsubscribe');
+    json(res, 200, { ok: true, devices: push.subs.length });
+  });
+  route('POST', /^\/api\/push\/test$/, async (req, res, ctx) => {
+    const b = await readJson(req);
+    const r = await needPush().send({ title: '👋 Handoff test', body: 'Phone notifications are working.', url: '/', tag: 'test' }, { only: b.endpoint ? String(b.endpoint) : undefined });
+    audit(ctx.ip, 'push_test');
+    json(res, 200, r);
+  });
   route('POST', /^\/api\/notify\/mute$/, async (req, res, ctx) => {
     const b = await readJson(req);
     const cwd = String(b.cwd || '');
@@ -122,7 +150,7 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
 
   // The settings the page is built with. `version` covers them and the page's own files: an open page
   // that reconnects and gets a different one (the server restarted with an update) reloads itself.
-  const pageSettings = () => ({ totp: cfg.totpEnabled, allowBypass: cfg.allowBypassPermissions, defaultMode: runner.normalizeMode(cfg.defaultPermissionMode), files: !!cfg.fileBrowser, search: !!cfg.search });
+  const pageSettings = () => ({ totp: cfg.totpEnabled, allowBypass: cfg.allowBypassPermissions, defaultMode: runner.normalizeMode(cfg.defaultPermissionMode), files: !!cfg.fileBrowser, search: !!cfg.search, push: !!cfg.push });
   const pageFiles = crypto.createHash('sha256');
   for (const f of fs.readdirSync(PUBLIC, { withFileTypes: true }).filter(f => f.isFile()).map(f => f.name).sort()) pageFiles.update(f).update(fs.readFileSync(path.join(PUBLIC, f)));
   const filesHash = pageFiles.digest('hex');

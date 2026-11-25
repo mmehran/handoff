@@ -409,3 +409,17 @@ test('photos: saved into the project for a session on the laptop, sent as image 
   await req('POST', `/api/sessions/${r.json.sessionId}/stop`);
   assert.equal((await req('POST', '/api/sessions/new', { cwd: work, text: 'x', images: [{ media_type: 'image/png', data: 'AAAA' }] })).status, 415);
 });
+
+test('push: the page gets the public key; only real push services can be subscribed', async () => {
+  const info = await req('GET', '/api/push');
+  assert.equal(info.json.enabled, true);
+  assert.equal(Buffer.from(info.json.publicKey, 'base64url').length, 65);
+  const keys = { p256dh: Buffer.concat([Buffer.from([4]), crypto.randomBytes(64)]).toString('base64url'), auth: crypto.randomBytes(16).toString('base64url') };
+  assert.equal((await req('POST', '/api/push/subscribe', { subscription: { endpoint: 'https://127.0.0.1:7870/send', keys } })).status, 400);
+  const ok = await req('POST', '/api/push/subscribe', { subscription: { endpoint: 'https://fcm.googleapis.com/fcm/send/test-device', keys } });
+  assert.equal(ok.status, 200, JSON.stringify(ok.json));
+  assert.equal((await req('GET', '/api/push')).json.devices, 1);
+  await req('POST', '/api/push/unsubscribe', { endpoint: 'https://fcm.googleapis.com/fcm/send/test-device' });
+  assert.equal((await req('GET', '/api/push')).json.devices, 0);
+  assert.equal((await req('GET', '/api/me')).json.push, true);
+});
