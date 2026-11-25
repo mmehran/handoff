@@ -2,7 +2,9 @@
 # Start Handoff automatically on Linux (systemd user service) or macOS (launchd agent), and manage it.
 # The same commands as scripts\autostart.ps1 on Windows:
 #
-#   scripts/autostart.sh install [--whatsapp-only]   set it up (starts at every login from then on)
+#   scripts/autostart.sh install                     set it up (starts at every login from then on)
+#                                                    it runs the parts turned on in .env (see docs/services.md);
+#                                                    --whatsapp-only (older setups) runs it with the web app off
 #   scripts/autostart.sh start | stop | restart | status | uninstall
 #
 # "stop" keeps it off, also after the next login, until "start". Settings come from .env as usual;
@@ -50,7 +52,7 @@ WantedBy=default.target
 EOF
     sc daemon-reload
     sc enable "$NAME" >/dev/null 2>&1
-    echo "Installed $UNIT. It starts at every login from now on."
+    echo "Installed $UNIT. It starts at every login from now on, with the parts turned on in .env."
     echo "Start it now with: scripts/autostart.sh start"
     echo "To keep it running while you're logged out: loginctl enable-linger \"\$USER\""
     ;;
@@ -107,7 +109,7 @@ Darwin)
 </plist>
 EOF
     plutil -lint "$PLIST" >/dev/null
-    echo "Installed $PLIST. It starts at every login from now on."
+    echo "Installed $PLIST. It starts at every login from now on, with the parts turned on in .env."
     echo "Start it now with: scripts/autostart.sh start"
     ;;
   start)   installed || die "Not installed. Run: scripts/autostart.sh install"; load; echo "Started." ;;

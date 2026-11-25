@@ -7,6 +7,8 @@ Handoff has two parts. Use either one on its own, or both together:
 | **Web app** | Browse and drive Claude Code from your phone or any browser: every project and session, live updates, prompts, approvals, questions, files and changes. Phone notifications too, for devices that turn them on. | A password (and ideally 2FA): `npm run setup`. To reach it from your phone, a tunnel: a [quick tunnel](setup-quick-tunnel.md) or [your own domain](setup-own-domain.md). | `HANDOFF_WEB=true` (the default) |
 | **WhatsApp alerts** | A WhatsApp message when a session needs approval, asks a question, is waiting, finishes or fails. Reply `yes`/`no` or an option number to answer straight from WhatsApp. | Docker, and a second WhatsApp number for the sender: `npm run setup:whatsapp`. See [WhatsApp](whatsapp.md). | `HANDOFF_WHATSAPP_ENABLED=true` |
 
+`npm run setup` asks which parts you want, then sets up only what they need: a password and 2FA for the web app, the receiving number for WhatsApp alerts. To pick without the questions, use `npm run setup -- --services web`, `--services whatsapp` or `--services web,whatsapp`.
+
 `npm start` starts the parts that are turned on in `.env`, and nothing else.
 
 ## Combinations
@@ -31,7 +33,7 @@ If neither part is on, or a part that is on isn't set up yet (the web app withou
 
 ## Switching later
 
-Change the settings in `.env` and restart Handoff: `npm start`, or with autostart:
+Run `npm run setup` again (Enter keeps each current answer), or change the settings in `.env` yourself. Turning WhatsApp alerts off keeps their number and token, so turning them back on needs no new setup. Then restart Handoff: `npm start`, or with autostart:
 
 ```bash
 powershell -ExecutionPolicy Bypass -File scripts\autostart.ps1 restart   # Windows

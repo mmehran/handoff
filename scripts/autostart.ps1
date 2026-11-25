@@ -2,7 +2,9 @@
 # starts it again within 5 minutes if it ever stops. Settings come from .env as usual.
 # Output goes to data\server.log (or data\whatsapp-only.log); a quick tunnel's URL is in data\public-url.txt.
 #
-#   powershell -ExecutionPolicy Bypass -File scripts\autostart.ps1 install [-WhatsAppOnly]
+#   powershell -ExecutionPolicy Bypass -File scripts\autostart.ps1 install
+#     It runs the parts turned on in .env (see docs\services.md). -WhatsAppOnly (older setups) runs it
+#     with the web app off, whatever .env says.
 #   powershell -ExecutionPolicy Bypass -File scripts\autostart.ps1 start|stop|restart|status|uninstall
 #
 # Use "stop" here rather than Stop-ScheduledTask: that only ends the hidden console window and
@@ -62,7 +64,7 @@ switch ($Action) {
       -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
     Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Trigger @($logon, $every5) -Settings $settings `
       -Description "Handoff: remote control and notifications for Claude Code ($root)" -Force | Out-Null
-    Write-Host "Installed task '$TaskName' ($(if ($WhatsAppOnly) { 'WhatsApp only' } else { 'full app' })). It starts at every logon and comes back within 5 minutes if it stops."
+    Write-Host "Installed task '$TaskName' ($(if ($WhatsAppOnly) { 'WhatsApp alerts only' } else { 'the parts turned on in .env' })). It starts at every logon and comes back within 5 minutes if it stops."
     if (@(Get-HandoffProcesses).Count) { Write-Host 'Handoff is already running; use "restart" to apply the new settings.' }
     else { Write-Host 'Start it now with: scripts\autostart.ps1 start' }
   }
