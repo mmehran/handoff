@@ -422,7 +422,7 @@ function copyBtn(text, label = 'Copy') {
   } }, label);
   return b;
 }
-const money = n => `$${(Number(n) || 0).toFixed(2)}`;
+const money = n => { const v = Number(n) || 0; return `$${v && v < 0.01 ? v.toFixed(4) : v.toFixed(2)}`; };
 
 async function showApiSettings() {
   const box = h('div', { class: 'list' }, h('div', { class: 'muted small' }, 'Loading…'));
@@ -570,6 +570,184 @@ async function showApiSettings() {
   };
 
   try { await load(); } catch (x) { say(h('div', { class: 'empty' }, x.message)); }
+}
+
+// ---------- "Try it": the API itself, from this page, with a key pasted here ----------
+// The key stays in this page's memory only (never stored), and every call goes to /api/v1 exactly
+// as a program's would. The same call is shown as curl, Python and JavaScript, the key masked on
+// screen and put in only when copied.
+let tryKey = '';
+async function tryItView() {
+  setTop('Try the API', '#/');
+  const base = `${location.origin}/api/v1`;
+  const call = (method, p, body) => fetch(base + p, { method, headers: { Authorization: `Bearer ${tryKey}` }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const keyIn = h('input', { type: 'password', placeholder: 'Paste an API key (hk_…)', autocomplete: 'off', spellcheck: 'false' });
+  keyIn.value = tryKey;
+  const who = h('div', { class: 'muted small' }, 'Kept only in this page while it\'s open; never saved. Make keys in the menu → API access.');
+  const ACTIONS = { chat: 'Chat', message: 'Message a session', ask: 'Ask without a trace', compare: 'Compare models' };
+  let action = 'chat';
+  const seg = h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'What to do' });
+  const session = h('select', { 'aria-label': 'Session' });
+  const model = h('select', { 'aria-label': 'Model' }), model2 = h('select', { 'aria-label': 'Second model' }), model3 = h('select', { 'aria-label': 'Third model' });
+  const effort = h('select', { 'aria-label': 'Effort' }, h('option', { value: '' }, 'Default effort'), ...['low', 'medium', 'high', 'xhigh', 'max'].map(e => h('option', { value: e }, EFFORT_LABELS[e] || e)));
+  const prompt = h('textarea', { rows: '4', placeholder: 'Your prompt…' });
+  const filesIn = h('input', { type: 'file', multiple: true, 'aria-label': 'Attach files' });
+  const streamBox = h('input', { type: 'checkbox' }); streamBox.checked = true;
+  const sendBtn = h('button', { class: 'btn primary' }, 'Send');
+  const out = h('div', { class: 'try-out' });
+  const info = h('div', { class: 'muted small' });
+  const raw = h('pre', { class: 'mono small' });
+  const rawBox = h('details', {}, h('summary', {}, 'The full answer (JSON)'), raw);
+  const codeBox = h('div', { class: 'list' });
+  const sessionRow = h('div', { class: 'row' }, session);
+  const compareRow = h('div', { class: 'row', hidden: true }, model2, model3);
+
+  const fillModels = list => {
+    for (const [sel, first] of [[model, 'Default model'], [model2, 'Second model'], [model3, 'Third model (optional)']]) {
+      sel.replaceChildren(h('option', { value: sel === model ? '' : '' }, first), ...list.map(m => h('option', { value: m.id }, m.name || m.id)));
+    }
+  };
+  const load = async () => {
+    tryKey = keyIn.value.trim();
+    if (!tryKey) return;
+    try {
+      const me = await call('GET', '/me');
+      const j = await me.json();
+      if (!me.ok) { who.textContent = `⚠️ ${j.error?.message || me.statusText}`; return; }
+      who.textContent = `Key "${j.key.name}": ${j.key.scopes.join(', ')} · tools ${j.key.tools} · today ${j.today.turns} turn(s). Kept only in this page.`;
+      const models = await (await call('GET', '/models')).json();
+      fillModels(models.data || []);
+      const s = await (await call('GET', '/sessions?limit=50')).json();
+      session.replaceChildren(
+        h('option', { value: '' }, 'The selected session (or a new one)'), h('option', { value: 'new' }, 'A new session'), h('option', { value: 'latest' }, 'The latest session'),
+        ...(s.sessions || []).map(x => h('option', { value: x.id }, `${x.title.slice(0, 60)} · ${x.project?.name || ''}`)));
+    } catch (x) { who.textContent = `⚠️ ${x.message}`; }
+  };
+  keyIn.addEventListener('change', load);
+  // before a key is pasted: the choices that need no list
+  fillModels([]);
+  session.replaceChildren(h('option', { value: '' }, 'The selected session (or a new one)'), h('option', { value: 'new' }, 'A new session'), h('option', { value: 'latest' }, 'The latest session'));
+  const pick = id => {
+    action = id;
+    for (const b of seg.children) b.classList.toggle('on', b.dataset.id === id);
+    compareRow.hidden = id !== 'compare';
+    renderCode();
+  };
+  for (const [id, label] of Object.entries(ACTIONS)) seg.append(h('button', { type: 'button', 'data-id': id, onclick: () => pick(id) }, label));
+
+  const files = async () => Promise.all([...filesIn.files].map(f => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve({ name: f.name, data: String(r.result).split(',')[1] });
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(f);
+  })));
+  // where the request goes, and its body
+  const request = (withFiles = []) => {
+    const s = session.value;
+    const body = { prompt: prompt.value };
+    if (model.value) body.model = model.value;
+    if (effort.value) body.effort = effort.value;
+    if (withFiles.length) body.files = withFiles;
+    if (action === 'chat') { if (s) body.session = s; return { path: '/chat', body }; }
+    if (action === 'compare') {
+      body.models = [model.value || 'default', model2.value, model3.value].filter(Boolean);
+      delete body.model;
+      if (s && s !== 'new' && s !== 'latest') body.session = s;
+      return { path: '/compare', body };
+    }
+    if (!s || s === 'new' || s === 'latest') return { path: null, body };
+    return { path: `/sessions/${s}/${action === 'ask' ? 'ask' : 'messages'}`, body };
+  };
+  const masked = () => (tryKey ? `${tryKey.slice(0, 6)}…${tryKey.slice(-4)}` : 'hk_…');
+  const codeFor = (lang, key) => {
+    const { path: p, body } = request();
+    const url = `${base}${p || '/sessions/<session id>/messages'}`;
+    const j = JSON.stringify(body);
+    if (lang === 'curl') return `curl ${url} \\\n  -H "Authorization: Bearer ${key}" \\\n  -d '${j.replace(/'/g, "'\\''")}'`;
+    if (lang === 'python') return `import json, requests\nr = requests.post("${url}",\n    headers={"Authorization": "Bearer ${key}"},\n    json=json.loads(r'''${j}'''), timeout=120)\nprint(r.json().get("text"))`;
+    return `const r = await fetch("${url}", {\n  method: "POST",\n  headers: { Authorization: "Bearer ${key}" },\n  body: JSON.stringify(${j})\n});\nconsole.log((await r.json()).text);`;
+  };
+  function renderCode() {
+    codeBox.replaceChildren(...[['curl', 'bash', 'curl'], ['python', 'python', 'Python'], ['js', 'javascript', 'JavaScript']].map(([id, lang, label]) =>
+      h('div', {}, h('div', { class: 'row' }, h('span', { class: 'label grow' }, label), copyBtn(() => codeFor(id, tryKey || 'hk_YOUR_KEY'), 'Copy with my key')), codeBlock(codeFor(id, masked()), lang))));
+  }
+  for (const el of [prompt, session, model, model2, model3, effort]) el.addEventListener('input', renderCode);
+  for (const el of [session, model, model2, model3, effort]) el.addEventListener('change', renderCode);
+
+  // shows an answer as it comes: Server-Sent Events from fetch, or a wait-and-poll
+  const sendIt = async () => {
+    if (!tryKey) return toast('Paste an API key first');
+    const req = request(await files().catch(() => []));
+    if (!req.path) return toast('Pick a session for this');
+    sendBtn.disabled = true;
+    out.replaceChildren(); raw.textContent = ''; info.textContent = 'Sending…';
+    const started = Date.now();
+    const columns = new Map();
+    const columnFor = m => {
+      if (!columns.has(m)) { const text = h('div', { class: 'msg assistant' }); const col = h('div', { class: 'try-col' }, h('div', { class: 'label' }, m), text); out.append(col); columns.set(m, { text, buf: '' }); }
+      return columns.get(m);
+    };
+    try {
+      if (streamBox.checked) {
+        const r = await call('POST', req.path, { ...req.body, stream: true });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error?.message || r.statusText); }
+        const reader = r.body.getReader(), dec = new TextDecoder();
+        let buf = '';
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let i;
+          while ((i = buf.indexOf('\n\n')) >= 0) {
+            const block = buf.slice(0, i); buf = buf.slice(i + 2);
+            const ev = (/^event: (.*)$/m.exec(block) || [])[1];
+            const data = (/^data: (.*)$/m.exec(block) || [])[1];
+            if (!ev || !data) continue;
+            const d = JSON.parse(data);
+            const col = columnFor(action === 'compare' ? d.model || 'Answer' : 'Answer'); // one column per model only when comparing
+            if (ev === 'text') { col.buf += d.text; col.text.textContent = col.buf; }
+            else if (ev === 'message' && !col.buf) { col.text.replaceChildren(md(d.text)); }
+            else if (ev === 'tool') info.textContent = `• ${d.tool}${d.summary ? ': ' + d.summary : ''}`;
+            else if (ev === 'approval') info.textContent = `Waiting for an approval: ${d.tool} (allow it on your phone or in the session)`;
+            else if (ev === 'done' || ev === 'error' || ev === 'all_done') {
+              raw.textContent = JSON.stringify(d, null, 2);
+              if (ev !== 'all_done' && d.text != null) col.text.replaceChildren(md(d.text || d.error?.message || ''));
+              if (ev === 'all_done') for (const a of d.answers) columnFor(a.model).text.replaceChildren(md(a.text || a.error?.message || ''));
+              info.textContent = `${d.status || 'done'} · ${((Date.now() - started) / 1000).toFixed(1)} s${d.usage?.costUsd != null ? ` · ${money(d.usage.costUsd)}` : ''}${d.sessionId ? ' · ' : ''}`;
+              if (d.sessionId) info.append(h('a', { href: `#/s/${d.sessionId}` }, 'open the chat'));
+            }
+          }
+        }
+      } else {
+        let r = await call('POST', req.path, { ...req.body, wait: 90 });
+        let j = await r.json();
+        while (r.status === 202) {
+          info.textContent = `${j.status}… ${((Date.now() - started) / 1000).toFixed(0)} s`;
+          r = await call('GET', `${req.path === '/compare' ? '/compare' : '/turns'}/${j.id}?wait=60`);
+          j = await r.json();
+        }
+        if (!r.ok) throw new Error(j.error?.message || r.statusText);
+        raw.textContent = JSON.stringify(j, null, 2);
+        if (j.answers) for (const a of j.answers) columnFor(a.model).text.replaceChildren(md(a.text || a.error?.message || ''));
+        else columnFor('Answer').text.replaceChildren(md(j.text || j.error?.message || ''));
+        info.textContent = `${j.status} · ${((Date.now() - started) / 1000).toFixed(1)} s`;
+      }
+    } catch (x) { info.textContent = `⚠️ ${x.message}`; }
+    finally { sendBtn.disabled = false; }
+  };
+  sendBtn.addEventListener('click', sendIt);
+
+  view.replaceChildren(h('div', { class: 'page tryit' },
+    h('div', { class: 'label' }, 'API key'), keyIn, who,
+    h('div', { class: 'label' }, 'What to do'), seg, sessionRow, compareRow,
+    h('div', { class: 'row' }, model, effort),
+    prompt,
+    h('div', { class: 'row' }, filesIn, h('label', { class: 'row' }, streamBox, h('span', {}, 'Stream the answer')), h('span', { class: 'grow' }), sendBtn),
+    info, out, rawBox,
+    h('div', { class: 'label' }, 'The same call in code'), codeBox,
+    h('div', { class: 'row' }, h('a', { class: 'btn', href: '/api/v1/docs', target: '_blank', rel: 'noopener' }, '📖 Every endpoint (Swagger)'))));
+  pick('chat');
+  if (tryKey) load();
 }
 
 // one key's recent calls: when, from where, what, how it went, how long, what it cost
@@ -2153,6 +2331,7 @@ async function route() {
     if (parts[0] === 'p' && parts[1]) await projectView(decodeURIComponent(parts[1]));
     else if (parts[0] === 's' && parts[1]) await sessionView(parts[1], params);
     else if (parts[0] === 'new') await newView(params);
+    else if (parts[0] === 'api') await tryItView();
     else await homeView();
   } catch (x) {
     if (x.message !== 'unauthorized') view.replaceChildren(h('div', { class: 'empty' }, 'Error: ' + x.message));

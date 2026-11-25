@@ -511,3 +511,11 @@ code.keyonce { font-size: 13px; padding: 10px 12px; border-radius: var(--radius)
 .card.act.bad { border-color: color-mix(in srgb, var(--err) 45%, transparent); }
 .card.act .s { white-space: normal; }
 input.reauth { width: 12em; flex: none; }
+/* the "Try it" page */
+.tryit { display: flex; flex-direction: column; gap: 10px; padding-bottom: 40px; }
+.tryit textarea { min-height: 96px; }
+.tryit .seg { flex-wrap: wrap; }
+.try-out { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.try-col { min-width: 0; }
+.try-col .msg { white-space: normal; }
+.tryit details pre { max-height: 360px; overflow: auto; }

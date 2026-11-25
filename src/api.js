@@ -15,6 +15,7 @@ import { addFiles } from './api-files.js';
 import { addWebhooks } from './webhooks.js';
 import { addOpenAI } from './openai.js';
 import { addCompare } from './compare.js';
+import { openapiSpec, docsPage, docsScript, DOCS_CSP } from './openapi.js';
 
 export { API_PREFIX, apiErr, sendError, isWithin };
 const VERSION = (() => { try { return JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version; } catch { return '?'; } })();
@@ -77,6 +78,14 @@ export function createApi(core, { log = console.log } = {}) {
   }
 
   // ---------- public ----------
+  // the API's description, and its Swagger UI page (public: no secrets in them; calls still need a key)
+  route('GET', '/openapi.json', null, (req, res) => json(res, 200, openapiSpec({ version: VERSION, server: cfg.publicHostname ? `https://${cfg.publicHostname}${API_PREFIX}` : API_PREFIX })), { public: true });
+  route('GET', '/docs', null, (req, res) => {
+    res.setHeader('Content-Security-Policy', DOCS_CSP);
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(docsPage());
+  }, { public: true });
+  route('GET', '/docs.js', null, (req, res) => { res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' }); res.end(docsScript()); }, { public: true });
   route('GET', '/health', null, (req, res) => json(res, 200, { ok: true, version: VERSION, api: 'v1', claudeSignedIn: core.claudeSignedIn ?? null }), { public: true });
 
   // ---------- this key ----------
