@@ -45,6 +45,10 @@ Off by default. With `HANDOFF_FILE_BROWSER=true`, every session gets a read-only
 - Every file opened is recorded in the audit log (`file_view`).
 - `HANDOFF_ALLOWED_ROOTS` limits the Files tab too.
 
+## Search index
+
+With `HANDOFF_SEARCH=true` (the default), Handoff keeps a copy of what your prompts and Claude's replies said in `data/search/`, so it can search them quickly. Tool output isn't copied. It's the same text that's already in `~/.claude`, git-ignored with the rest of `data/`, and never shown in the Files tab. Delete the folder at any time; it's rebuilt in the background.
+
 ## Secrets at rest
 
 | Secret | Where | If it leaks |

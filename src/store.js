@@ -310,6 +310,32 @@ export class Store {
     return { events, start, end: stop, size };
   }
 
+  // The messages around the transcript line that starts at byte `offset` (a search hit), with that
+  // line's events marked `hit`. `around` = how many events to keep on each side.
+  async readAround(id, offset, around = 6) {
+    const file = await this.sessionFile(id);
+    if (!file) return null;
+    const size = (await fsp.stat(file)).size;
+    offset = Math.min(Math.max(0, Math.floor(Number(offset) || 0)), size);
+    for (let span = 64 * 1024; ; span *= 4) { // grow the window until the hit line fits (huge lines exist)
+      const start = Math.max(0, offset - span), end = Math.min(size, offset + span);
+      const buf = await readSlice(file, start, end - start);
+      const lines = [];
+      let s = 0, nl;
+      while ((nl = buf.indexOf(10, s)) >= 0) { lines.push({ at: start + s, bytes: buf.subarray(s, nl) }); s = nl + 1; }
+      if (start > 0) lines.shift(); // probably cut off
+      if (!lines.some(l => l.at === offset) && end < size && span < 16 * 1024 * 1024) continue;
+      const events = [];
+      for (const l of lines) {
+        let o; try { o = JSON.parse(l.bytes.toString('utf8')); } catch { continue; }
+        for (const e of normalize(o)) events.push(l.at === offset ? { ...e, hit: true } : e);
+      }
+      const first = events.findIndex(e => e.hit), last = events.findLastIndex(e => e.hit);
+      if (first < 0) return { events: events.slice(-around * 2) };
+      return { events: events.slice(Math.max(0, first - around), last + 1 + around) };
+    }
+  }
+
   // Events appended after byte offset `from` (complete lines only), for clients that can't stream.
   async readSince(id, from, maxBytes = 2 * 1024 * 1024) {
     const file = await this.sessionFile(id);

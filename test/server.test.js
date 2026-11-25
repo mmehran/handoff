@@ -366,3 +366,16 @@ test('HANDOFF_AUDIT_TEXT=false keeps what prompts said out of the audit log', as
   assert.ok(!JSON.stringify(lines).includes('my private words'));
   cfg.auditText = true;
 });
+
+test('search: across all chats, inside one chat, and a hit shown in context', async () => {
+  const all = await req('GET', `/api/search?q=${encodeURIComponent('hello desktop')}`);
+  assert.equal(all.status, 200, JSON.stringify(all.json));
+  const r = all.json.results.find(x => x.sessionId === desktopId);
+  assert.ok(r, 'the desktop chat is found');
+  assert.match(r.hits[0].snippet, /hello from desktop/);
+  const one = await req('GET', `/api/sessions/${desktopId}/search?q=there`);
+  assert.deepEqual(one.json.results.map(x => x.sessionId), [desktopId]);
+  const ctx = await req('GET', `/api/sessions/${desktopId}/around?offset=${r.hits[0].offset}`);
+  assert.ok(ctx.json.events.some(e => e.hit && /hello from desktop/.test(e.text)));
+  assert.equal((await fetch(`${base}/api/search?q=x`)).status, 401, 'needs a login');
+});

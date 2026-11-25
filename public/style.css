@@ -198,3 +198,18 @@ a.btn { color: var(--text); }
 #banner code { font-family: var(--mono); font-size: .92em; background: var(--panel2); padding: 1px 4px; border-radius: 4px; }
 #banner .ban-icon { flex: none; }
 #banner .icon { flex: none; margin: -4px -6px -4px 0; font-size: 18px; line-height: 1; }
+
+/* ---------- search ---------- */
+input.find { margin: 10px 0 6px; }
+mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+.hit { font-size: 13px; color: var(--muted); margin-top: 6px; overflow-wrap: anywhere; line-height: 1.4; }
+.hit .who { font-weight: 600; color: var(--text); }
+button.hit.card { width: 100%; text-align: left; font: inherit; font-size: 13px; color: var(--muted); cursor: pointer; margin: 0; }
+button.hit.card:hover { border-color: var(--accent); }
+.find-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 4px 10px 10px; margin-bottom: 10px; }
+.find-panel .list { max-height: 50vh; overflow: auto; }
+.overlay { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.45); display: flex; align-items: flex-end; justify-content: center; }
+.ctx-sheet { width: 100%; max-width: 920px; max-height: 85vh; display: flex; flex-direction: column; gap: 8px; background: var(--bg); border-top: 2px solid var(--accent); border-radius: 14px 14px 0 0; padding: 12px 14px max(14px, env(safe-area-inset-bottom)); }
+.ctx-msgs { overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.msg.hit-msg { outline: 2px solid var(--accent); }
+.msg .pre { white-space: pre-wrap; }

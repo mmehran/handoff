@@ -11,6 +11,7 @@ import { injectMessage } from './inbox.js';
 import { Notifier, buildAnswer } from './notify.js';
 import { FileBrowser } from './files.js';
 import { rotate } from './logfile.js';
+import { SearchIndex } from './search.js';
 
 const PUBLIC = path.join(ROOT, 'public');
 const COOKIE = 'handoff_sid';
@@ -109,7 +110,7 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
 
   // The settings the page is built with. `version` covers them and the page's own files: an open page
   // that reconnects and gets a different one (the server restarted with an update) reloads itself.
-  const pageSettings = () => ({ totp: cfg.totpEnabled, allowBypass: cfg.allowBypassPermissions, defaultMode: runner.normalizeMode(cfg.defaultPermissionMode), files: !!cfg.fileBrowser });
+  const pageSettings = () => ({ totp: cfg.totpEnabled, allowBypass: cfg.allowBypassPermissions, defaultMode: runner.normalizeMode(cfg.defaultPermissionMode), files: !!cfg.fileBrowser, search: !!cfg.search });
   const pageFiles = crypto.createHash('sha256');
   for (const f of fs.readdirSync(PUBLIC, { withFileTypes: true }).filter(f => f.isFile()).map(f => f.name).sort()) pageFiles.update(f).update(fs.readFileSync(path.join(PUBLIC, f)));
   const filesHash = pageFiles.digest('hex');
@@ -223,6 +224,28 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
       'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(f.name)}`
     });
     fs.createReadStream(f.abs).on('error', () => res.destroy()).pipe(res);
+  });
+
+  // ---------- search (optional; on by default) ----------
+  // The index is built in the background shortly after start, and topped up before every search.
+  const search = cfg.search ? new SearchIndex({ store, dir: path.join(DATA_DIR, 'search'), log }) : null;
+  if (search) {
+    const t = setTimeout(() => search.update()
+      .then(n => n && log(`[search] index up to date (${n} chat${n === 1 ? '' : 's'} added or updated)`))
+      .catch(e => log(`[search] ${e.message}`)), 15e3);
+    t.unref?.();
+  }
+  const searchIndex = () => { if (!search) throw httpErr(404, 'search is turned off (HANDOFF_SEARCH)'); return search; };
+  const query = ctx => String(ctx.url.searchParams.get('q') || '').slice(0, 200);
+  route('GET', /^\/api\/search$/, async (req, res, ctx) => json(res, 200, await searchIndex().search(query(ctx))));
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/search$/, async (req, res, ctx, m) => {
+    json(res, 200, await searchIndex().search(query(ctx), { sessionId: m[1] }));
+  });
+  // a search hit in context: the messages around one transcript line
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/around$/, async (req, res, ctx, m) => {
+    const r = await store.readAround(m[1], ctx.url.searchParams.get('offset'));
+    if (!r) return json(res, 404, { error: 'session not found' });
+    json(res, 200, r);
   });
 
   // polling fallback for networks/proxies that buffer event streams

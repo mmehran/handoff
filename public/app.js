@@ -287,16 +287,87 @@ function renderPerms() {
 let runListeners = [];
 function onRunChange(r) { runListeners.forEach(fn => fn(r)); }
 
+// ---------- search ----------
+// Text with every search word highlighted (built as DOM nodes, never HTML).
+function marked(text, terms) {
+  const s = String(text || ''), low = s.toLowerCase(), out = [];
+  let i = 0;
+  while (i < s.length && terms.length) {
+    let at = -1, len = 0;
+    for (const t of terms) { const j = low.indexOf(t, i); if (j >= 0 && (at < 0 || j < at)) { at = j; len = t.length; } }
+    if (at < 0) break;
+    if (at > i) out.push(s.slice(i, at));
+    out.push(h('mark', {}, s.slice(at, at + len)));
+    i = at + len;
+  }
+  out.push(s.slice(i));
+  return out;
+}
+const termsOf = q => String(q).toLowerCase().split(/\s+/).filter(Boolean);
+const indexingNote = d => d.indexing && d.indexing.done < d.indexing.total
+  ? h('div', { class: 'notice' }, `Still building the search index (${d.indexing.done} of ${d.indexing.total} chats), so results may be incomplete.`) : null;
+
+// One search hit, in a sheet with the messages around it.
+async function showInContext(sessionId, offset, terms) {
+  const box = h('div', { class: 'ctx-msgs' }, h('div', { class: 'muted small' }, 'Loading…'));
+  const close = () => { overlay.remove(); removeEventListener('keydown', onKey); };
+  const onKey = e => { if (e.key === 'Escape') close(); };
+  const overlay = h('div', { class: 'overlay', onclick: e => { if (e.target === overlay) close(); } },
+    h('div', { class: 'ctx-sheet', role: 'dialog', 'aria-label': 'Search hit in context' },
+      h('div', { class: 'row' }, h('b', {}, 'In context'), h('span', { class: 'grow' }),
+        h('a', { class: 'btn', href: `#/s/${sessionId}`, onclick: close }, 'Open chat'),
+        h('button', { class: 'icon', 'aria-label': 'Close', onclick: close }, '×')),
+      box));
+  document.body.append(overlay);
+  addEventListener('keydown', onKey);
+  try {
+    const d = await api('GET', `/api/sessions/${sessionId}/around?offset=${offset}`);
+    box.replaceChildren(...d.events.map(e => {
+      const hit = e.hit ? ' hit-msg' : '';
+      if (e.kind === 'user') return h('div', { class: 'msg user' + hit }, ...marked(e.text, e.hit ? terms : []));
+      if (e.kind === 'assistant') return h('div', { class: 'msg assistant' + hit }, e.hit ? h('div', { class: 'pre' }, ...marked(e.text, terms)) : md(e.text));
+      if (e.kind === 'tool_use') return h('div', { class: 'msg system' }, `🔧 ${e.name} ${e.summary || ''}`);
+      return null;
+    }).filter(Boolean));
+    box.querySelector('.hit-msg')?.scrollIntoView({ block: 'center' });
+  } catch (x) { box.replaceChildren(h('div', { class: 'empty' }, x.message)); }
+}
+
 // ---------- views ----------
 async function homeView() {
   setTop('Handoff');
   const live = h('div', { class: 'list' }, h('div', { class: 'muted small' }, 'Loading…'));
   const filter = h('input', { type: 'search', placeholder: 'Filter projects…' });
   const projList = h('div', { class: 'list' });
+  // search across every chat; while it has text, its results take the place of the page
+  const find = state.me.search ? h('input', { type: 'search', class: 'find', placeholder: 'Search all chats…', 'aria-label': 'Search all chats', value: state.homeFind || '' }) : null;
+  const results = h('div', { class: 'list', hidden: true });
+  const normal = h('div', {}, h('h2', {}, 'Live now'), live, h('h2', {}, 'Projects'), filter, projList);
   view.replaceChildren(
     h('div', { class: 'row' }, h('a', { href: '#/new', class: 'btn primary' }, '+ New session'), h('span', { class: 'grow' })),
-    h('h2', {}, 'Live now'), live,
-    h('h2', {}, 'Projects'), filter, projList);
+    ...(find ? [find, results] : []), normal);
+  if (find) {
+    let timer, seq = 0;
+    const run = async () => {
+      const q = find.value.trim();
+      state.homeFind = q;
+      results.hidden = !q; normal.hidden = !!q;
+      if (!q) return;
+      const my = ++seq, terms = termsOf(q);
+      results.replaceChildren(h('div', { class: 'muted small' }, 'Searching…'));
+      try {
+        const d = await api('GET', `/api/search?q=${encodeURIComponent(q)}`);
+        if (my !== seq) return;
+        const cards = d.results.map(r => h('a', { class: 'card', href: `#/s/${r.sessionId}?find=${encodeURIComponent(q)}` },
+          h('div', { class: 't' }, ...marked(r.title, terms)),
+          h('div', { class: 's' }, `${(r.cwd || r.projectKey).split(/[\\/]/).filter(Boolean).pop()} · ${ago(r.mtime)}${r.total ? ` · ${r.total} message${r.total === 1 ? '' : 's'}` : ''}`),
+          ...r.hits.map(x => h('div', { class: 'hit' }, h('span', { class: 'who' }, x.kind === 'user' ? 'You' : 'Claude'), ' ', ...marked(x.snippet, terms)))));
+        results.replaceChildren(...[indexingNote(d), ...(cards.length ? cards : [h('div', { class: 'empty' }, 'No chat contains all of those words.')])].filter(Boolean));
+      } catch (x) { if (my === seq) results.replaceChildren(h('div', { class: 'empty' }, x.message)); }
+    };
+    find.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(run, 350); });
+    if (find.value) run();
+  }
 
   const loadLive = async () => {
     const d = await api('GET', '/api/live');
@@ -486,10 +557,33 @@ async function sessionView(id, params = new URLSearchParams()) {
   const settings = h('div', { class: 'small muted' });
   const stopBtn = h('button', { class: 'btn danger', hidden: true, onclick: async () => { await api('POST', `/api/sessions/${id}/stop`); toast('Stopped'); } }, 'Stop');
   const intBtn = h('button', { class: 'btn', hidden: true, onclick: async () => { await api('POST', `/api/sessions/${id}/interrupt`); toast('Interrupt sent'); } }, 'Interrupt');
+  // search inside this chat (the whole transcript, not only what's loaded)
+  const findBox = h('input', { type: 'search', class: 'find', placeholder: 'Search this chat…', 'aria-label': 'Search this chat' });
+  const findList = h('div', { class: 'list' });
+  const findPanel = h('div', { class: 'find-panel', hidden: true }, findBox, findList);
+  let findTimer, findSeq = 0;
+  const runFind = async () => {
+    const q = findBox.value.trim(), my = ++findSeq, terms = termsOf(q);
+    if (!q) return findList.replaceChildren();
+    findList.replaceChildren(h('div', { class: 'muted small' }, 'Searching…'));
+    try {
+      const d = await api('GET', `/api/sessions/${id}/search?q=${encodeURIComponent(q)}`);
+      if (my !== findSeq) return;
+      const hits = d.results[0]?.hits || [];
+      findList.replaceChildren(...[indexingNote(d),
+        hits.length ? h('div', { class: 'small muted' }, `${hits.length}${hits.length === 200 ? '+' : ''} message${hits.length === 1 ? '' : 's'}, newest first. Tap one to see it in context.`) : h('div', { class: 'empty' }, 'Not found in this chat.'),
+        ...hits.map(x => h('button', { class: 'hit card', onclick: () => showInContext(id, x.offset, terms) },
+          h('span', { class: 'who' }, x.kind === 'user' ? 'You' : 'Claude'), x.ts ? h('span', { class: 'small muted' }, ' · ' + ago(Date.parse(x.ts))) : null, ' ', ...marked(x.snippet, terms)))
+      ].filter(Boolean));
+    } catch (x) { if (my === findSeq) findList.replaceChildren(h('div', { class: 'empty' }, x.message)); }
+  };
+  findBox.addEventListener('input', () => { clearTimeout(findTimer); findTimer = setTimeout(runFind, 350); });
+  const openFind = q => { findPanel.hidden = false; if (q != null && q !== findBox.value) { findBox.value = q; runFind(); } findBox.focus({ preventScroll: true }); };
+  const findBtn = state.me.search ? h('button', { class: 'btn', onclick: () => { if (findPanel.hidden) { openFind(); scrollTo(0, 0); } else findPanel.hidden = true; } }, 'Search') : null;
   const head = h('div', { class: 'session-head' },
     h('div', { class: 'row' }, h('div', { class: 'grow mono' }, info.cwd || ''), status),
     settings,
-    h('div', { class: 'row' }, intBtn, stopBtn));
+    h('div', { class: 'row' }, findBtn, intBtn, stopBtn));
   const msgs = h('div', { id: 'msgs' });
   const working = h('div', { class: 'working', hidden: true }, h('span', { class: 'spinner' }), h('span', { class: 'wtext' }, 'Claude is working…'));
   const older = h('button', { class: 'btn', hidden: true }, 'Load older messages');
@@ -587,7 +681,7 @@ async function sessionView(id, params = new URLSearchParams()) {
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doSend(); } });
   ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, innerHeight * 0.4) + 'px'; });
   const composer = h('div', { class: 'composer' }, notice, ta, h('div', { class: 'row opts' }, ...picks.els, forkLabel, h('span', { class: 'grow spacer' }), send));
-  const chat = h('div', { class: 'chat' }, older, msgs, working, composer);
+  const chat = h('div', { class: 'chat' }, findPanel, older, msgs, working, composer);
 
   // Chat / Files tabs; Files only when the server has the file browser turned on
   const files = state.me.files ? filesPanel(id) : null;
@@ -599,7 +693,7 @@ async function sessionView(id, params = new URLSearchParams()) {
     if (files) files.el.hidden = !inFiles;
     chatTab.classList.toggle('on', !inFiles); chatTab.setAttribute('aria-selected', String(!inFiles));
     filesTab.classList.toggle('on', inFiles); filesTab.setAttribute('aria-selected', String(inFiles));
-    if (inFiles) { files.show(p); scrollTo(0, 0); } else scrollTo(0, document.body.scrollHeight);
+    if (inFiles) { files.show(p); scrollTo(0, 0); } else if (p.has('find') && state.me.search) { openFind(p.get('find')); scrollTo(0, 0); } else scrollTo(0, document.body.scrollHeight);
   };
 
   view.replaceChildren(head, ...(files ? [h('div', { class: 'tabs', role: 'tablist' }, chatTab, filesTab), files.el] : []), chat);

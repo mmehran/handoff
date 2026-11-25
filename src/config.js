@@ -63,7 +63,8 @@ export function loadConfig() {
     sessionMaxDays: num('HANDOFF_LOGIN_MAX_DAYS', 7),
     rememberDays: num('HANDOFF_REMEMBER_DAYS', 30), // "Remember me" sign-ins last this long; 0 hides the option
     fileBrowser: bool('HANDOFF_FILE_BROWSER'),       // read-only Files tab in every session
-    auditText: bool('HANDOFF_AUDIT_TEXT', true),     // false: the audit log leaves out what prompts and answers said
+    auditText: bool('HANDOFF_AUDIT_TEXT', true),
+    search: bool('HANDOFF_SEARCH', true),            // full-text search across chats (keeps a text index in data/search)     // false: the audit log leaves out what prompts and answers said
     defaultPermissionMode: str('HANDOFF_DEFAULT_MODE', 'manual'),
     allowBypassPermissions: bool('HANDOFF_ALLOW_BYPASS'),
     allowedRoots: list('HANDOFF_ALLOWED_ROOTS', path.delimiter).map(p => path.resolve(p)), // empty = any folder
