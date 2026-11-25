@@ -34,14 +34,28 @@ test('for a session on the laptop, photos are saved in the project, ignored by g
   const cwd = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-uploads-')));
   const dir = path.join(cwd, UPLOAD_DIR);
   fs.mkdirSync(dir);
-  const old = path.join(dir, 'old.jpg');
+  const weekAgo = new Date(Date.now() - 8 * 86400e3);
+  const old = path.join(dir, '2026-01-01-0a1b2c3d.jpg'); // one Handoff saved
   fs.writeFileSync(old, 'x');
-  fs.utimesSync(old, new Date(Date.now() - 8 * 86400e3), new Date(Date.now() - 8 * 86400e3));
+  fs.utimesSync(old, weekAgo, weekAgo);
+  const mine = path.join(dir, 'my-notes.txt'); // someone else's: never deleted
+  fs.writeFileSync(mine, 'x');
+  fs.utimesSync(mine, weekAgo, weekAgo);
   const note = await saveForLiveSession(cwd, parseImages([{ media_type: 'image/png', data: png }, { media_type: 'image/jpeg', data: jpg }]));
-  const files = fs.readdirSync(dir).filter(n => n !== '.gitignore');
+  const files = fs.readdirSync(dir).filter(n => n !== '.gitignore' && n !== 'my-notes.txt');
   assert.equal(files.length, 2, 'the week-old upload is gone');
+  assert.ok(fs.existsSync(mine), 'files Handoff didn\'t name are left alone');
   assert.match(note, /2 photos from my phone: \.handoff-uploads\/\S+\.png, \.handoff-uploads\/\S+\.jpg\. Open them with the Read tool/);
   assert.match(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8'), /^\*$/m);
   assert.deepEqual([...fs.readFileSync(path.join(dir, files.find(n => n.endsWith('.png'))))].slice(0, 4), [0x89, 0x50, 0x4e, 0x47]);
   fs.rmSync(cwd, { recursive: true, force: true });
+});
+
+test('nothing is saved through a .handoff-uploads that is a link to somewhere else', async t => {
+  const cwd = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-uploads-')));
+  const elsewhere = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-elsewhere-')));
+  t.after(() => { fs.rmSync(cwd, { recursive: true, force: true }); fs.rmSync(elsewhere, { recursive: true, force: true }); });
+  try { fs.symlinkSync(elsewhere, path.join(cwd, UPLOAD_DIR), 'junction'); } catch { return t.skip('links can\'t be made here'); }
+  await assert.rejects(saveForLiveSession(cwd, parseImages([{ media_type: 'image/png', data: png }])), /not a plain folder|points outside/);
+  assert.deepEqual(fs.readdirSync(elsewhere), [], 'nothing was written through the link');
 });

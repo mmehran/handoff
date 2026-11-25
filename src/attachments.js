@@ -42,24 +42,51 @@ export const imageContent = (text, images) => [
   ...images.map(i => ({ type: 'image', source: { type: 'base64', media_type: i.media_type, data: i.data } }))
 ];
 
+// Names Handoff gives the files it saves: <date>-<8 hex>[-<original name>].<ext>. Only such files are
+// ever cleaned up.
+const OURS = /^\d{4}-\d{2}-\d{2}-[0-9a-f]{8}(-[A-Za-z0-9._-]{1,100})?$/;
+
+// The project's .handoff-uploads folder, made safe to write into: a real folder inside the project
+// (not a link to somewhere else), git-ignored, with files of ours over a week old cleared out.
+export async function uploadsDir(cwd) {
+  const dir = path.join(cwd, UPLOAD_DIR);
+  try {
+    const st = await fsp.lstat(dir);
+    if (st.isSymbolicLink() || !st.isDirectory()) throw httpErr(409, `${UPLOAD_DIR} in this project is not a plain folder, so nothing is saved there`);
+  } catch (e) {
+    if (e.status) throw e;
+    await fsp.mkdir(dir, { recursive: true });
+  }
+  const [real, realCwd] = await Promise.all([fsp.realpath(dir), fsp.realpath(cwd)]);
+  const rel = path.relative(realCwd, real);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) throw httpErr(409, `${UPLOAD_DIR} in this project points outside it, so nothing is saved there`);
+  await fsp.writeFile(path.join(dir, '.gitignore'), '# files sent from Handoff; not part of the project\n*\n');
+  try {
+    for (const name of await fsp.readdir(dir)) {
+      if (!OURS.test(name.replace(/\.[A-Za-z0-9]{1,10}$/, ''))) continue;
+      const st = await fsp.lstat(path.join(dir, name));
+      if (st.isFile() && Date.now() - st.mtimeMs > KEEP_DAYS * 86400e3) await fsp.rm(path.join(dir, name), { force: true });
+    }
+  } catch { /* cleanup is best effort */ }
+  return dir;
+}
+
+// Saves files ({ bytes, name?, ext }) there; -> their paths inside the project (forward slashes)
+export async function saveUploads(cwd, files) {
+  const dir = await uploadsDir(cwd);
+  const out = [];
+  for (const f of files) {
+    const stem = f.name ? String(f.name).replace(/\.[A-Za-z0-9]{1,10}$/, '').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) : '';
+    const name = `${new Date().toISOString().slice(0, 10)}-${crypto.randomBytes(4).toString('hex')}${stem ? '-' + stem : ''}.${f.ext}`;
+    await fsp.writeFile(path.join(dir, name), f.bytes, { flag: 'wx' }); // never through an existing file or link
+    out.push(`${UPLOAD_DIR}/${name}`);
+  }
+  return out;
+}
+
 // For a session running on the laptop: save the photos in its project folder and return the text to
 // add to the message. Old uploads (over a week) are cleared out on the way.
 export async function saveForLiveSession(cwd, images) {
-  const dir = path.join(cwd, UPLOAD_DIR);
-  await fsp.mkdir(dir, { recursive: true });
-  await fsp.writeFile(path.join(dir, '.gitignore'), '# photos sent from Handoff; not part of the project\n*\n');
-  try {
-    for (const name of await fsp.readdir(dir)) {
-      if (name === '.gitignore') continue;
-      const st = await fsp.stat(path.join(dir, name));
-      if (Date.now() - st.mtimeMs > KEEP_DAYS * 86400e3) await fsp.rm(path.join(dir, name), { force: true });
-    }
-  } catch { /* cleanup is best effort */ }
-  const names = [];
-  for (const img of images) {
-    const name = `${new Date().toISOString().slice(0, 10)}-${crypto.randomBytes(4).toString('hex')}.${EXT[img.media_type]}`;
-    await fsp.writeFile(path.join(dir, name), img.bytes);
-    names.push(`${UPLOAD_DIR}/${name}`);
-  }
+  const names = await saveUploads(cwd, images.map(img => ({ bytes: img.bytes, ext: EXT[img.media_type] })));
   return `\n\n(I attached ${names.length === 1 ? 'a photo' : `${names.length} photos`} from my phone: ${names.join(', ')}. Open ${names.length === 1 ? 'it' : 'them'} with the Read tool to see ${names.length === 1 ? 'it' : 'them'}.)`;
 }

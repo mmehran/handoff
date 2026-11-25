@@ -11,6 +11,7 @@ import { json, clientIp } from './http-util.js';
 import { TOOL_PRESETS, SCOPES } from './apikeys.js';
 import { API_PREFIX, apiErr, sendError, isWithin, keyDir } from './api-util.js';
 import { addSending } from './api-send.js';
+import { addFiles } from './api-files.js';
 
 export { API_PREFIX, apiErr, sendError, isWithin };
 const VERSION = (() => { try { return JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version; } catch { return '?'; } })();
@@ -254,6 +255,7 @@ export function createApi(core, { log = console.log } = {}) {
 
   const api = { handle, route, inScope, sessionFor, sessionView, findProject, webUrl, ctxOf, statusOf, iso, version: VERSION };
   api.turns = addSending(api, core); // sending prompts and getting answers (api-send.js)
+  addFiles(api, core);              // attached files, the project's files, git (api-files.js)
   return api;
 }
 

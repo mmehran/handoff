@@ -35,6 +35,8 @@ export function addSending(api, core) {
   // ---------- reading requests ----------
   // JSON, with or without a Content-Type (curl -d sends form encoding). Multipart: see uploads.
   async function readBody(req, limit = 256 * 1024) {
+    const ct = String(req.headers['content-type'] || '');
+    if (/multipart\/form-data/i.test(ct)) return api.readMultipart(req, ct, limit);
     let size = 0; const chunks = [];
     for await (const c of req) { size += c.length; if (size > limit) throw apiErr(413, 'too_large', `The body is larger than ${Math.round(limit / 1048576)} MB.`); chunks.push(c); }
     const text = Buffer.concat(chunks).toString('utf8').trim();
@@ -121,10 +123,15 @@ export function addSending(api, core) {
     if (text.length > 100_000) throw apiErr(413, 'too_large', 'The prompt is longer than 100,000 characters.');
     let images;
     try { images = parseImages(b.images); } catch (e) { throw apiErr(e.status || 400, 'invalid_image', e.message); }
-    const extra = await api.attachments?.(ctx, b, { target, fork }) || { blocks: [], note: '', laptopNote: '' };
+    // tools first: they decide how attached files are handed over
+    const tools = b.tools || (ask && TOOL_RANK[k.tools] < 1 ? 'readOnly' : k.tools);
+    if (!TOOL_PRESETS.includes(tools)) throw apiErr(400, 'invalid_request', `"tools" is one of ${TOOL_PRESETS.join(', ')}.`);
+    if (TOOL_RANK[tools] < TOOL_RANK[k.tools]) throw apiErr(403, 'tools_not_allowed', `This key is limited to "${k.tools}" tools.`);
+    if (ask && tools === 'all') throw apiErr(400, 'invalid_request', 'Asking without a trace can\'t change files: use "tools": "readOnly" or "none".');
+    const extra = await api.attachments?.(ctx, b, { target, fork, tools, text }) || { text, blocks: [], note: '', laptopNote: '' };
     if (!text.trim() && !images.length && !extra.blocks.length && !extra.note) throw apiErr(400, 'empty_prompt', 'Send a "prompt" (or a photo or file).');
     const original = text;
-    text = (text.trim() || (images.length || extra.note ? 'Please look at this.' : '')) + extra.note;
+    text = (extra.text.trim() || (images.length || extra.note || extra.blocks.length ? 'Please look at this.' : '')) + extra.note;
 
     // the answer's language and length: a short note at the end of the prompt (works everywhere,
     // continued sessions and sessions open on the computer too)
@@ -145,11 +152,6 @@ export function addSending(api, core) {
     const mode = b.mode ? runner.normalizeMode(b.mode) : k.defaultMode;
     if (!PERMISSION_MODES.includes(mode)) throw apiErr(400, 'invalid_request', `"mode" is one of ${PERMISSION_MODES.join(', ')}.`);
     if (!k.modes.includes(mode)) throw apiErr(403, 'mode_not_allowed', `This key may use these modes: ${k.modes.join(', ')}.`);
-
-    const tools = b.tools || (ask && TOOL_RANK[k.tools] < 1 ? 'readOnly' : k.tools);
-    if (!TOOL_PRESETS.includes(tools)) throw apiErr(400, 'invalid_request', `"tools" is one of ${TOOL_PRESETS.join(', ')}.`);
-    if (TOOL_RANK[tools] < TOOL_RANK[k.tools]) throw apiErr(403, 'tools_not_allowed', `This key is limited to "${k.tools}" tools.`);
-    if (ask && tools === 'all') throw apiErr(400, 'invalid_request', 'Asking without a trace can\'t change files: use "tools": "readOnly" or "none".');
 
     // settings only a new process can take: never into a session someone else is using
     const startOnly = ['system', 'schema', 'maxBudgetUsd', 'tools'].filter(f => b[f] != null && b[f] !== '');
