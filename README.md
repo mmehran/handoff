@@ -2,7 +2,9 @@
 
 [![CI](https://github.com/mmehran/handoff/actions/workflows/ci.yml/badge.svg)](https://github.com/mmehran/handoff/actions/workflows/ci.yml)
 
-**Self-hosted remote control for Claude Code.** Handoff runs on the computer where you use Claude Code and lets you reach it from your phone or any other browser. You can browse every project and session, watch Claude work live, send prompts, answer its questions, and approve tools. Optionally, it also sends you WhatsApp messages when a session needs you.
+**Self-hosted remote control for Claude Code.** Handoff runs on the computer where you use Claude Code and lets you reach it from your phone or any other browser. You can browse every project and session, watch Claude work live, send prompts, answer its questions, and approve tools. It can also send you WhatsApp messages when a session needs you.
+
+The web app and the WhatsApp alerts are separate parts: use either one on its own, or both. With WhatsApp alerts alone, there's no password, no tunnel and no open port.
 
 It's a small Node.js server with no npm dependencies. It listens on `127.0.0.1` only and reaches the internet through a Cloudflare tunnel.
 
@@ -47,14 +49,21 @@ It's a small Node.js server with no npm dependencies. It listens on `127.0.0.1` 
 - **WhatsApp alerts (optional).** Get a message when a session needs approval, asks a question, is waiting, finishes or fails. Reply `yes`/`no` or an option number to answer straight from WhatsApp. Set quiet hours (one summary afterwards) or mute individual projects. This uses a self-hosted sender built on the open-source [Baileys](https://github.com/WhiskeySockets/Baileys) library, so there's no paid API.
 - **Works on a phone, tablet or computer.** Light and dark themes (or follow the system). On a phone the chat's status, actions and tabs stay pinned at the top; on a tablet or computer, sessions and projects stay in a sidebar. Install it to the home screen as an app: long-press its icon for New session or Search, and share text, links or photos to it from other apps (Android) to start a session.
 
-## Pick your setup
+## Choose what to run
+
+| Part | What you get | Needs | Turned on by |
+|---|---|---|---|
+| **Web app** | Everything above, from your phone or any browser, plus phone notifications | A password (`npm run setup`); a tunnel to reach it from your phone | `HANDOFF_WEB=true` (default) |
+| **WhatsApp alerts** | A message when a session needs you; reply to answer or approve | Docker, a second WhatsApp number | `HANDOFF_WHATSAPP_ENABLED=true` |
+
+Use one or both. `npm run setup` asks which you want and sets up only those, and `npm start` starts only those. Details and every combination: [Choosing what to run](docs/services.md).
 
 | You want | Guide | Needs |
 |---|---|---|
-| Try it now, free, no domain | [Quick tunnel (random URL)](docs/setup-quick-tunnel.md) | `cloudflared` |
-| A permanent address like `https://claude.example.com` | [Your own domain on Cloudflare](docs/setup-own-domain.md) | A domain on Cloudflare (free plan is fine) |
+| The web app, now, free, no domain | [Quick tunnel (random URL)](docs/setup-quick-tunnel.md) | `cloudflared` |
+| The web app at a permanent address like `https://claude.example.com` | [Your own domain on Cloudflare](docs/setup-own-domain.md) | A domain on Cloudflare (free plan is fine) |
 | WhatsApp alerts as well | [WhatsApp notifications](docs/whatsapp.md) | Docker, a second WhatsApp number |
-| **Only** WhatsApp alerts, no web UI or tunnel | [WhatsApp-only mode](docs/whatsapp-only.md) | Docker, a second WhatsApp number |
+| **Only** WhatsApp alerts: no web app, no tunnel, no password | [WhatsApp alerts only](docs/whatsapp-only.md) | Docker, a second WhatsApp number |
 
 Also useful:
 - [Configuration reference](docs/configuration.md): every `.env` setting
@@ -69,8 +78,10 @@ You need [Node.js 20+](https://nodejs.org) and [Claude Code](https://github.com/
 ```bash
 git clone https://github.com/mmehran/handoff.git
 cd handoff
-npm run setup        # creates .env, asks for a password and sets up 2FA
+npm run setup        # asks which parts you want; for the web app, a password and 2FA
 ```
+
+This quick start is for the web app. For WhatsApp alerts only, follow [WhatsApp alerts only](docs/whatsapp-only.md) instead.
 
 Install `cloudflared` (other systems: [releases](https://github.com/cloudflare/cloudflared/releases)):
 
@@ -123,7 +134,7 @@ All settings live in `.env`; see [`.env.example`](.env.example) and the [configu
 
 | Command | Writes |
 |---|---|
-| `npm run setup` | `HANDOFF_PASSWORD_HASH`, `HANDOFF_TOTP_SECRET` |
+| `npm run setup` (or `-- --services web,whatsapp` to skip the first questions) | `HANDOFF_WEB`; for the web app `HANDOFF_PASSWORD_HASH`, `HANDOFF_TOTP_SECRET`; for WhatsApp alerts the same as `setup:whatsapp` below |
 | `npm run setup:domain` | `HANDOFF_TUNNEL=cloudflare`, `HANDOFF_PUBLIC_HOSTNAME`, `HANDOFF_CLOUDFLARE_TUNNEL_TOKEN` |
 | `npm run setup:whatsapp` (asks for the receiving number, or pass `-- --to +15551234567`) | `HANDOFF_WHATSAPP_ENABLED`, `HANDOFF_WHATSAPP_TO`, `HANDOFF_WHATSAPP_TOKEN` |
 
@@ -131,9 +142,9 @@ All settings live in `.env`; see [`.env.example`](.env.example) and the [configu
 
 | Command | |
 |---|---|
-| `npm start` | Server, plus the tunnel chosen by `HANDOFF_TUNNEL` |
-| `npm run start:local` | Server only, at http://127.0.0.1:7860 |
-| `npm run whatsapp-only` | WhatsApp alerts only, with no server |
+| `npm start` | The parts turned on in `.env`: the web app with the tunnel chosen by `HANDOFF_TUNNEL`, WhatsApp alerts, or both |
+| `npm run start:local` | The same, without the tunnel: the web app at http://127.0.0.1:7860 |
+| `npm run whatsapp-only` | `npm start` with the web app off, whatever `.env` says (kept for older setups) |
 | `npm test` | Tests. They use a fake `~/.claude` and a fake `claude` CLI, so they never touch your data. |
 | `docker compose up -d --build` | WhatsApp sender (optional) |
 

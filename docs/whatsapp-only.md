@@ -1,6 +1,6 @@
-# WhatsApp-only mode
+# WhatsApp alerts only
 
-Just want a WhatsApp ping when Claude Code needs you, and nothing else? WhatsApp-only mode runs **without** the web UI, the password, the tunnel, or any listening port. It watches the Claude Code sessions on your computer (Claude Desktop, terminal, IDEs) and messages you when:
+Just want a WhatsApp ping when Claude Code needs you, and nothing else? Turn the web app off and keep only WhatsApp alerts (see [Choosing what to run](services.md)). Handoff then runs **without** the web app, the password, the tunnel, or any listening port. It watches the Claude Code sessions on your computer (Claude Desktop, terminal, IDEs) and messages you when:
 
 - ❓ a session **asks a question** (numbered options; reply `2` or type an answer, and it's delivered into the session)
 - ⏳ a session is **waiting** for you (e.g. a permission prompt; the message says what it needs)
@@ -10,7 +10,7 @@ There is no public endpoint at all. The only network traffic is to the WhatsApp 
 
 ## Setup
 
-You need Node.js 20+ and Docker. Claude Code must be installed, but this mode doesn't run the `claude` CLI, so it doesn't need to be signed in separately.
+You need Node.js 20+ and Docker. Claude Code must be installed, but with only WhatsApp alerts Handoff doesn't run the `claude` CLI, so it doesn't need to be signed in separately.
 
 ```bash
 git clone https://github.com/mmehran/handoff.git
@@ -19,9 +19,9 @@ cd handoff
 
 1. **Configure:**
    ```bash
-   npm run setup:whatsapp
+   npm run setup -- --services whatsapp
    ```
-   It asks for the number that should *receive* the alerts, with its country code (e.g. `+15551234567`). You can also pass it directly: `npm run setup:whatsapp -- --to +15551234567`. This creates `.env` and fills in `HANDOFF_WHATSAPP_ENABLED`, `HANDOFF_WHATSAPP_TO` and `HANDOFF_WHATSAPP_TOKEN`. You don't need `npm run setup`; there's no password in this mode.
+   It asks for the number that should *receive* the alerts, with its country code (e.g. `+15551234567`). This creates `.env` with the web app turned off (`HANDOFF_WEB=false`) and fills in `HANDOFF_WHATSAPP_ENABLED`, `HANDOFF_WHATSAPP_TO` and `HANDOFF_WHATSAPP_TOKEN`. No password is asked: there's nothing to sign in to. (Plain `npm run setup` asks the same, with a question for each part first.)
 
 2. **Start the sender:**
    ```bash
@@ -32,17 +32,18 @@ cd handoff
 
 4. **Run it:**
    ```bash
-   npm run whatsapp-only
+   npm start
    ```
    ```
    [notify] WhatsApp notifications on -> +15551234567
-   Handoff (WhatsApp only) watching C:\Users\you\.claude
-   WhatsApp sender linked as 15550000000; notifications go to +15551234567
+   Handoff: WhatsApp alerts
+   Watching Claude Code sessions in C:\Users\you\.claude
+   WhatsApp sender linked as 15550000000; alerts go to +15551234567
    ```
 
-Leave it running, or install it to [start automatically](autostart.md):
-- Windows: `scripts\autostart.ps1 install -WhatsAppOnly`
-- Linux/macOS: `sh scripts/autostart.sh install --whatsapp-only`
+Leave it running, or install it to [start automatically](autostart.md). The autostart task follows `.env` like `npm start` does.
+
+`npm run whatsapp-only` (and `autostart … -WhatsAppOnly`), from before parts could be turned on one by one, still work: they run Handoff with the web app off, whatever `.env` says.
 
 ## How it knows
 
@@ -53,12 +54,12 @@ Claude Code keeps a small status file for every running session in `~/.claude/se
 
 All of this is read-only. Nothing in Claude Code's settings or sessions is changed.
 
-When you reply with an option number (or text), the answer is delivered into that running session through Claude Code's own local messaging inbox, the same mechanism the full Handoff app uses. In Claude Desktop the question's picker stays open on screen. Your answer runs as soon as it's closed there (Esc), and the confirmation message tells you so.
+When you reply with an option number (or text), the answer is delivered into that running session through Claude Code's own local messaging inbox, the same mechanism the web app uses. In Claude Desktop the question's picker stays open on screen. Your answer runs as soon as it's closed there (Esc), and the confirmation message tells you so.
 
 ## Limits
 
-- **No approvals.** Tool permission prompts in Desktop/terminal sessions can only be answered on the computer. You get a ⏳ message saying what's needed, but replying `yes` does nothing in this mode. The full Handoff app can approve tools for sessions it starts itself.
-- **No links.** There's no web UI, so messages don't include an "Open" link.
+- **No approvals.** Tool permission prompts in Desktop/terminal sessions can only be answered on the computer. You get a ⏳ message saying what's needed, but replying `yes` does nothing here. With the web app on, Handoff can approve tools for the sessions it starts itself.
+- **No links.** There's no web app, so messages don't include an "Open" link.
 - The limits from [whatsapp.md](whatsapp.md) apply: one message per kind per session every 20 s, and 12 messages per minute in total. Choose kinds with `HANDOFF_WHATSAPP_EVENTS`.
 
-Want the web UI later? Run `npm run setup` (password + 2FA), pick a tunnel, and use `npm start` instead. Your WhatsApp settings carry over.
+Want the web app later? Run `npm run setup` again, answer yes to the web app (it asks for a password and 2FA), pick a tunnel, and restart. Your WhatsApp settings carry over.

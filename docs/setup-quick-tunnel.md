@@ -31,8 +31,9 @@ npm run setup
 ```
 
 `npm run setup` creates `.env` from `.env.example`, then:
-1. asks for a password (12+ characters; it's typed hidden), or generates one if you just press Enter
-2. offers 2FA. **Say yes.** Your server will be on the internet. Add the key it shows to Google Authenticator, Microsoft Authenticator, Authy or 1Password, then type the 6-digit code to confirm.
+1. asks which parts you want. Say yes to the web app; WhatsApp alerts are optional (see [WhatsApp notifications](whatsapp.md)). More in [Choosing what to run](services.md).
+2. asks for a password (12+ characters; it's typed hidden), or generates one if you just press Enter
+3. offers 2FA. **Say yes.** Your server will be on the internet. Add the key it shows to Google Authenticator, Microsoft Authenticator, Authy or 1Password, then type the 6-digit code to confirm.
 
 Only a scrypt hash of the password and the 2FA secret are saved, in `.env`. Running `npm run setup` again replaces them and signs out every device.
 
@@ -53,7 +54,8 @@ npm start
 You'll see something like:
 
 ```
-Handoff listening on http://127.0.0.1:7860
+Handoff: web app
+Listening on http://127.0.0.1:7860
 claude CLI: C:\Users\you\.local\bin\claude.exe   2FA: on
 [tunnel] starting cloudflared -> http://127.0.0.1:7860
 
@@ -76,7 +78,7 @@ Open that address on your phone, sign in with your password and 2FA code, and us
 
 | Problem | Fix |
 |---|---|
-| `No password configured` | Run `npm run setup`. |
+| `The web app needs a password` | Run `npm run setup`. |
 | `neither cloudflared nor ngrok found` | Install cloudflared and open a new terminal. |
 | Sign-in works but prompts fail with a login error | Run `claude auth login`, or set `CLAUDE_CODE_OAUTH_TOKEN`. |
 | Address stopped working | It changed. Check `data/public-url.txt` or the console. |

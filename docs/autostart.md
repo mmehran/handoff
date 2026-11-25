@@ -1,6 +1,6 @@
 # Start automatically
 
-Handoff is a normal Node.js process: `node src/index.js` for the full app, or `node src/whatsapp-only.js` for WhatsApp-only mode. It reads `.env` from its own folder, so the working directory doesn't matter. `--log-file` sends its output to `data/server.log` (or `data/whatsapp-only.log`) instead of the console.
+Handoff is a normal Node.js process: `node src/index.js`, the same as `npm start`. It starts the parts turned on in `.env` (the web app, WhatsApp alerts, or both; see [Choosing what to run](services.md)), so the autostart task needs no options: change `.env` and restart it. It reads `.env` from its own folder, so the working directory doesn't matter. `--log-file` sends its output to `data/server.log` instead of the console.
 
 ## Windows (tested)
 
@@ -8,11 +8,7 @@ Handoff is a normal Node.js process: `node src/index.js` for the full app, or `n
 powershell -ExecutionPolicy Bypass -File scripts\autostart.ps1 install
 ```
 
-For WhatsApp-only mode:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\autostart.ps1 install -WhatsAppOnly
-```
+(`-WhatsAppOnly`, from before parts could be turned on one by one, still works: it runs Handoff with the web app off whatever `.env` says, and logs to `data\whatsapp-only.log`.)
 
 This registers a per-user scheduled task named **Handoff** that:
 - starts 30 s after you sign in to Windows, hidden (no console window)
@@ -43,7 +39,7 @@ sh scripts/autostart.sh install
 sh scripts/autostart.sh start
 ```
 
-For WhatsApp-only mode: `sh scripts/autostart.sh install --whatsapp-only`.
+(`install --whatsapp-only`, from before parts could be turned on one by one, still works: it runs Handoff with the web app off whatever `.env` says.)
 
 - **Linux:** a systemd user service, `~/.config/systemd/user/handoff.service`. To keep it running while you're logged out, also run `loginctl enable-linger "$USER"`. Logs: `data/server.log`, or `journalctl --user -u handoff`.
 - **macOS:** a launchd agent, `~/Library/LaunchAgents/com.handoff.handoff.plist`.

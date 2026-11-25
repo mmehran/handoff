@@ -6,7 +6,7 @@ Don't want to set up WhatsApp? **Phone notifications** (⋮ menu → Phone notif
 
 WhatsApp is **off by default**. Handoff works without it, and nothing related to WhatsApp runs until you set it up.
 
-> Want only the alerts, with no web UI and no tunnel? See [WhatsApp-only mode](whatsapp-only.md). It uses the same setup, steps 1 to 4 below.
+> Want only the alerts, with no web app and no tunnel? See [WhatsApp alerts only](whatsapp-only.md) and [Choosing what to run](services.md). It uses the same setup, steps 1 to 4 below.
 
 ## What you get
 

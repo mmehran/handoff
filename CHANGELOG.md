@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.0 (2026-11-26)
+
+### Added
+- **Choose what to run.** The web app (`HANDOFF_WEB`, on by default) and WhatsApp alerts (`HANDOFF_WHATSAPP_ENABLED`) can each be used on their own or together. `npm start` starts only the parts that are on; with WhatsApp alerts alone nothing listens on a port and no password or tunnel is needed. See docs/services.md.
+- **`npm run setup` asks which parts you want** and sets up only what they need: a password and 2FA for the web app, the receiving number for WhatsApp alerts. Enter keeps each current answer; `--services web,whatsapp` skips the questions; nothing is written if setup stops halfway.
+- `npm start` stops with the command to run when a part that is on isn't set up yet, or when nothing is on.
+
+### Changed
+- `npm run whatsapp-only` and `autostart … -WhatsAppOnly` still work, as `npm start` with the web app off. The autostart task otherwise just follows `.env`.
+- Turning WhatsApp alerts off in setup keeps their number and token for later.
+- For contributors: the server is split into a shared core (`src/core.js`), the web app (`src/web.js`) and the HTTP server (`src/server.js`); the parts are listed in `src/services.js`.
+
 ## 1.3.0 (2026-11-26)
 
 ### Added

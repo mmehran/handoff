@@ -19,7 +19,7 @@ Compared with the [quick tunnel](setup-quick-tunnel.md):
 ```bash
 git clone https://github.com/mmehran/handoff.git
 cd handoff
-npm run setup        # password + 2FA, written to .env
+npm run setup        # say yes to the web app, then password + 2FA, written to .env
 ```
 
 ## 3. Create a Cloudflare API token (temporary)
@@ -84,7 +84,8 @@ npm start
 ```
 
 ```
-Handoff listening on http://127.0.0.1:7860
+Handoff: web app
+Listening on http://127.0.0.1:7860
   Public URL (cloudflare tunnel): https://claude.example.com
 [tunnel] starting cloudflared (startup); allowing 90s to connect
 [tunnel] connected to Cloudflare (lhr01) after 3s
