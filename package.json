@@ -1,7 +1,7 @@
 {
   "name": "handoff",
-  "version": "1.4.0",
-  "description": "Self-hosted remote control for Claude Code: a web app to browse, watch, reply and approve from your phone, and WhatsApp alerts. Use either part on its own, or both.",
+  "version": "1.5.0",
+  "description": "Self-hosted remote control for Claude Code: a web app to browse, watch, reply and approve from your phone, WhatsApp alerts, and an API for your own programs. Use any part on its own, or any mix.",
   "type": "module",
   "engines": {
     "node": ">=20"

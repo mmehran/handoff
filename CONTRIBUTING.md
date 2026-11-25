@@ -29,6 +29,8 @@ To run it while you work: `npm run setup` once (password and 2FA), then `npm run
 | `src/core.js` | What every part shares: history, the runner, alerts, the audit log, answering questions |
 | `src/server.js` | The HTTP server: security headers, the health check, and the parts that answer requests |
 | `src/web.js` | The web app's routes: sign-in, CSRF, pages and the `/api/*` they use |
+| `src/api.js`, `src/api-*.js`, `src/turns.js` | The API (`/api/v1`): keys and reading, sending and answers (turns), files; `openai.js`, `compare.js`, `webhooks.js`, `openapi.js` for the rest; keys in `src/apikeys.js` |
+| `clients/` | Ready-made API clients: Python, JavaScript and a `handoff` command |
 | `src/store.js` | Reads Claude Code's transcripts and session registry (read-only) |
 | `src/runner.js` | Starts and drives `claude` processes for sessions Handoff runs |
 | `src/notify.js`, `src/push.js` | Alerts: WhatsApp and phone push notifications |

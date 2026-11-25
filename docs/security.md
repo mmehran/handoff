@@ -79,6 +79,44 @@ Photos sent with a prompt are checked (JPEG, PNG, GIF or WebP, the bytes must ma
 
 With `HANDOFF_SEARCH=true` (the default), Handoff keeps a copy of what your prompts and Claude's replies said in `data/search/`, so it can search them quickly. Tool output isn't copied. It's the same text that's already in `~/.claude`, git-ignored with the rest of `data/`, and never shown in the Files tab. Delete the folder at any time; it's rebuilt in the background.
 
+## API
+
+The API (`HANDOFF_API`, off by default) lets programs drive Claude Code on this computer, so it's built to give each program only what it needs. Details: [the API](api.md).
+
+**Keys:**
+- They're made in the web app (which asks for your 2FA code, or the password when 2FA is off) or with `node scripts/api-key.js` on the computer.
+- A key is 32 random bytes. Only its SHA-256 is kept, in `data/api-keys.json` (mode 600).
+- It's shown once, never logged, revocable at once, and can expire.
+- "Sign out all devices" can revoke every key too, since a stolen browser cookie could have made one.
+- Keys are sent as `Authorization: Bearer` or `X-Api-Key`, never in a URL.
+
+**What a key may do:**
+- Each key has scopes (read, chat, approve, files, git), project folders, permission modes, tools and limits, checked on every call.
+- Sessions outside its projects look like they don't exist. The folder each session works in now is what counts.
+- Auto and Bypass modes are only for keys with every project.
+
+**Limited keys:**
+- They never write into a session they didn't start, or one open on the computer; they answer in their own copy.
+- Their `readOnly`/`none` tools come with `--strict-mcp-config`, so your MCP servers aren't reachable through them.
+
+**Protected files:** processes the API starts get `--settings` rules that deny Claude's file tools Handoff's `.env` and `data/`, Claude's `.credentials.json` and the session inboxes. A Bash command still needs your Allow in "Ask me" mode. Auto and Bypass keys can do anything you can on the computer.
+
+**Attachments and @mentions:**
+- An `@path` outside the session's folder is refused, as Claude Code would read it into the prompt.
+- Uploads are type- and size-checked and kept in a git-ignored `.handoff-uploads/`.
+- Uploads are never written through a link or an existing file. Cleanup deletes only files Handoff named.
+- Nothing is fetched from URLs.
+
+**Webhooks:** HTTPS only, no redirects followed. Every resolved address is checked at connect time, so no address on this computer or a private network can be reached. Calls are signed with the key's webhook secret.
+
+**Limits:**
+- Each key has its own rate limit. Wrong keys are throttled per address, never for everyone.
+- CORS is off unless you list sites.
+- Cookies count for nothing on `/api/v1`, so there's no CSRF.
+- Every call is in the audit log with the key's name.
+
+**The Swagger page** (`/api/v1/docs`) and `/api/v1/openapi.json` are public, as no secrets are in them. The page loads Swagger UI from jsDelivr at a fixed version, under its own Content-Security-Policy.
+
 ## Secrets at rest
 
 | Secret | Where | If it leaks |
@@ -88,6 +126,8 @@ With `HANDOFF_SEARCH=true` (the default), Handoff keeps a copy of what your prom
 | WhatsApp shared token | `.env` | Run `npm run setup:whatsapp` again, then `docker compose up -d`. |
 | WhatsApp linked-device keys | Docker volume `wa-auth` | Remove the linked device on the phone; `docker compose down -v`. |
 | Cloudflare API token | **never stored** | Delete it in Cloudflare after setup. |
+| API keys | only their SHA-256, in `data/api-keys.json` | Revoke the key (web app or `node scripts/api-key.js revoke`). |
+| Webhook secrets | `data/api-keys.json` | Revoke the key and make a new one. |
 
 `.env` and `data/` are git-ignored. Don't commit them, paste them into issues, or include them in screenshots.
 

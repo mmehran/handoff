@@ -108,7 +108,7 @@ Everything is logged to the console, or to `data/server.log` with [autostart](au
 
 ## Extra protection (optional)
 
-You can put [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) in front of the hostname, for example to allow only your email address, as a second login before Handoff's own password + 2FA. If you do, add a bypass policy for the path `/api/health`, or the end-to-end check will count every request as a miss and keep restarting the tunnel.
+You can put [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) in front of the hostname, for example to allow only your email address, as a second login before Handoff's own password + 2FA. If you do, add a bypass policy for the path `/api/health`, or the end-to-end check will count every request as a miss and keep restarting the tunnel. Using [the API](api.md)? Also bypass `/api/v1/*`: programs sign in with a Handoff API key, not through Cloudflare's login page.
 
 ## Troubleshooting
 

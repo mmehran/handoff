@@ -4,7 +4,9 @@
 
 **Self-hosted remote control for Claude Code.** Handoff runs on the computer where you use Claude Code and lets you reach it from your phone or any other browser. You can browse every project and session, watch Claude work live, send prompts, answer its questions, and approve tools. It can also send you WhatsApp messages when a session needs you.
 
-The web app and the WhatsApp alerts are separate parts: use either one on its own, or both. With WhatsApp alerts alone, there's no password, no tunnel and no open port.
+And it has an **API**, so your own programs, scripts and phone shortcuts can use the Claude Code on your computer too, including from any OpenAI-compatible chat app.
+
+The web app, the WhatsApp alerts and the API are separate parts: use any one of them on its own, or any mix. With WhatsApp alerts alone, there's no password, no tunnel and no open port.
 
 It's a small Node.js server with no npm dependencies. It listens on `127.0.0.1` only and reaches the internet through a Cloudflare tunnel.
 
@@ -47,6 +49,7 @@ It's a small Node.js server with no npm dependencies. It listens on `127.0.0.1` 
 - **Remember me.** Tick it when you sign in on your own phone and it stays signed in for 30 days.
 - **Phone notifications.** Turn them on per device from the ⋮ menu and get the same alerts as notifications, even with the app closed. No WhatsApp, no account, nothing extra to install (on iPhone, add Handoff to the Home Screen first).
 - **WhatsApp alerts (optional).** Get a message when a session needs approval, asks a question, is waiting, finishes or fails. Reply `yes`/`no` or an option number to answer straight from WhatsApp. Set quiet hours (one summary afterwards) or mute individual projects. This uses a self-hosted sender built on the open-source [Baileys](https://github.com/WhiskeySockets/Baileys) library, so there's no paid API.
+- **An API for your own programs (optional).** Send a prompt and get the answer, or stream it. Pick a session and continue it with its context, or ask it something without changing it. Attach photos and files, and choose the model and effort. Approve what Claude wants to do, compare 2–3 models side by side, and get a webhook when a task ends. It has an OpenAI-compatible endpoint for chat apps and SDKs, a Swagger page with every endpoint, a "Try it" page in the web app, and ready-made Python, JavaScript and command-line clients. Keys have their own permissions, projects and limits. See [the API](docs/api.md).
 - **Works on a phone, tablet or computer.** Light and dark themes (or follow the system). On a phone the chat's status, actions and tabs stay pinned at the top; on a tablet or computer, sessions and projects stay in a sidebar. Install it to the home screen as an app: long-press its icon for New session or Search, and share text, links or photos to it from other apps (Android) to start a session.
 
 ## Choose what to run
@@ -55,8 +58,9 @@ It's a small Node.js server with no npm dependencies. It listens on `127.0.0.1` 
 |---|---|---|---|
 | **Web app** | Everything above, from your phone or any browser, plus phone notifications | A password (`npm run setup`); a tunnel to reach it from your phone | `HANDOFF_WEB=true` (default) |
 | **WhatsApp alerts** | A message when a session needs you; reply to answer or approve | Docker, a second WhatsApp number | `HANDOFF_WHATSAPP_ENABLED=true` |
+| **API** | Your programs and shortcuts send prompts and get answers; OpenAI-compatible too | API keys; a tunnel to reach it from elsewhere | `HANDOFF_API=true` |
 
-Use one or both. `npm run setup` asks which you want and sets up only those, and `npm start` starts only those. Details and every combination: [Choosing what to run](docs/services.md).
+Use any one, or any mix. `npm run setup` asks which you want and sets up only those, and `npm start` starts only those. Details and every combination: [Choosing what to run](docs/services.md).
 
 | You want | Guide | Needs |
 |---|---|---|
@@ -64,6 +68,7 @@ Use one or both. `npm run setup` asks which you want and sets up only those, and
 | The web app at a permanent address like `https://claude.example.com` | [Your own domain on Cloudflare](docs/setup-own-domain.md) | A domain on Cloudflare (free plan is fine) |
 | WhatsApp alerts as well | [WhatsApp notifications](docs/whatsapp.md) | Docker, a second WhatsApp number |
 | **Only** WhatsApp alerts: no web app, no tunnel, no password | [WhatsApp alerts only](docs/whatsapp-only.md) | Docker, a second WhatsApp number |
+| Your own programs, scripts, phone shortcuts or chat apps | [The API](docs/api.md) | An API key |
 
 Also useful:
 - [Configuration reference](docs/configuration.md): every `.env` setting
@@ -137,6 +142,7 @@ All settings live in `.env`; see [`.env.example`](.env.example) and the [configu
 | `npm run setup` (or `-- --services web,whatsapp` to skip the first questions) | `HANDOFF_WEB`; for the web app `HANDOFF_PASSWORD_HASH`, `HANDOFF_TOTP_SECRET`; for WhatsApp alerts the same as `setup:whatsapp` below |
 | `npm run setup:domain` | `HANDOFF_TUNNEL=cloudflare`, `HANDOFF_PUBLIC_HOSTNAME`, `HANDOFF_CLOUDFLARE_TUNNEL_TOKEN` |
 | `npm run setup:whatsapp` (asks for the receiving number, or pass `-- --to +15551234567`) | `HANDOFF_WHATSAPP_ENABLED`, `HANDOFF_WHATSAPP_TO`, `HANDOFF_WHATSAPP_TOKEN` |
+| `node scripts/api-key.js create --name "…"` (also `list`, `revoke`) | an API key, hashed in `data/api-keys.json` (not in `.env`) |
 
 ## Commands
 

@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.5.0 (2026-11-26)
+
+### Added
+- **The API**, Handoff's third part (`HANDOFF_API`, off by default): your own programs, scripts and phone shortcuts use the Claude Code on your computer. See docs/api.md.
+  - **Keys** made in the web app (menu → API access, with your 2FA code) or with `node scripts/api-key.js`; only their hash is kept. Each key has scopes, projects, permission modes, tools, defaults (model, effort, plain text, language, length), limits and an expiry, with presets for a phone shortcut, automation or a chat app.
+  - **Send and answer:** `/chat` (continues the selected session or starts one), new sessions, messages to any session (with its context), and "ask without a trace" (an unsaved copy answers). Answers wait up to 90 s, then can be polled, or stream as Server-Sent Events, or come back as plain text.
+  - **Sessions:** every session across projects, paged; full messages; activity; search; pick one with `/selection`.
+  - **Photos, files and @mentions**, as JSON or multipart; the project's files, changes and git (commit, push, discard, worktrees) with their own permissions.
+  - **Approvals** reach your phone as before, naming the key; a key can also allow or deny. Sessions open on the computer get prompts through their inbox, answers read from their transcript.
+  - **Compare models:** one prompt, 2–3 models, side by side, nothing saved.
+  - **Webhooks**, signed, when a turn needs approval and when it ends.
+  - **An OpenAI-compatible endpoint** (`/chat/completions`): chat apps and SDKs continue the same session as they resend the history.
+  - **A Swagger page** (`/api/v1/docs`) and OpenAPI description; a **"Try it" page** in the web app; **ready-made clients** in `clients/` (Python, JavaScript, a `handoff` command).
+  - Clear errors for Claude's own usage limit (`claude_limit`) and a signed-out Claude Code (`claude_signed_out`); each answer's cost; a link to the chat (`webUrl`); queue positions; recent turns; an activity log per key in the web app.
+- `npm run setup` asks about the API too, and can make a first key.
+
+### Changed
+- Processes the API starts stop after 60 s idle (`HANDOFF_API_IDLE_SECONDS`) and leave the web app a place; restarting a session's process waits for the old one to exit, so two never write one chat (this also fixes changing the effort).
+- Photos saved for a session open on the computer: never through a `.handoff-uploads` link, and cleanup only deletes files Handoff named.
+- Setup keeps answers typed (or pasted) before their question.
+
 ## 1.4.0 (2026-11-26)
 
 ### Added
