@@ -42,7 +42,7 @@ cd handoff
 
 Leave it running, or install it to [start automatically](autostart.md):
 - Windows: `scripts\autostart.ps1 install -WhatsAppOnly`
-- Linux/macOS: use `src/whatsapp-only.js` in the service file
+- Linux/macOS: `sh scripts/autostart.sh install --whatsapp-only`
 
 ## How it knows
 

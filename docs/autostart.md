@@ -33,69 +33,36 @@ Manage it with the same script. Run these from the Handoff folder, each with `po
 
 It runs after you sign in, not at the Windows lock screen before sign-in, because Claude Code and its sessions belong to your user account. With a quick tunnel, the current address is in `data\public-url.txt`.
 
-## Linux: systemd user service (untested)
+## Linux and macOS
 
-`~/.config/systemd/user/handoff.service`:
-
-```ini
-[Unit]
-Description=Handoff (remote control for Claude Code)
-After=network-online.target
-
-[Service]
-WorkingDirectory=%h/handoff
-ExecStart=/usr/bin/node %h/handoff/src/index.js
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=default.target
+```bash
+sh scripts/autostart.sh install
 ```
 
 ```bash
-systemctl --user daemon-reload
+sh scripts/autostart.sh start
 ```
 
-```bash
-systemctl --user enable --now handoff
-```
+For WhatsApp-only mode: `sh scripts/autostart.sh install --whatsapp-only`.
 
-```bash
-loginctl enable-linger "$USER"     # keep it running when you're logged out
-```
+- **Linux:** a systemd user service, `~/.config/systemd/user/handoff.service`. To keep it running while you're logged out, also run `loginctl enable-linger "$USER"`. Logs: `data/server.log`, or `journalctl --user -u handoff`.
+- **macOS:** a launchd agent, `~/Library/LaunchAgents/com.handoff.handoff.plist`.
 
-Logs: `journalctl --user -u handoff -f`. For WhatsApp-only mode, use `src/whatsapp-only.js` in `ExecStart`. Check the node path with `which node`.
+Both start Handoff at every login and restart it if it stops. They use the `node` and `PATH` you have when you run `install`, so `claude` and `cloudflared` are found; run `install` again if those move.
 
-## macOS: launchd agent (untested)
+The same commands as on Windows:
 
-`~/Library/LaunchAgents/com.handoff.plist` (replace `/Users/you/handoff` and the node path from `which node`):
+| Command | What it does |
+|---|---|
+| `sh scripts/autostart.sh start` | Starts Handoff (and keeps it starting at login). |
+| `sh scripts/autostart.sh stop` | Ends Handoff and everything it started, and keeps it off, also after the next login, until `start`. |
+| `sh scripts/autostart.sh restart` | Stop, then start. Use it after editing `.env` or pulling new code. |
+| `sh scripts/autostart.sh status` | Shows whether it's set up and running, and the current address. |
+| `sh scripts/autostart.sh uninstall` | Stops Handoff and removes the service. |
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.handoff</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/opt/homebrew/bin/node</string>
-    <string>/Users/you/handoff/src/index.js</string>
-    <string>--log-file</string>
-  </array>
-  <key>WorkingDirectory</key><string>/Users/you/handoff</string>
-  <key>EnvironmentVariables</key>
-  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-</dict>
-</plist>
-```
+`HANDOFF_SERVICE_NAME=other sh scripts/autostart.sh install` installs a second copy under another name.
 
-```bash
-launchctl load ~/Library/LaunchAgents/com.handoff.plist
-```
-
-`PATH` must include the folders where `claude` and `cloudflared` are installed.
+All three scripts (Windows, Linux, macOS) are run for real on every change by the project's CI: install, start, stop (it must stay off), start, restart and uninstall, checking after each step that the server answers or doesn't.
 
 ## The WhatsApp sender
 
