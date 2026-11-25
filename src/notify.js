@@ -132,12 +132,15 @@ export class Notifier {
     this.runner.on('permission', p => {
       this.openPerm = { id: p.id, sessionId: p.sessionId, at: Date.now() };
       this.event('approval', p.sessionId, {
-        detail: `Tool: ${p.tool}${summarize(p.input) ? ' — ' + summarize(p.input) : ''}\n\nReply *yes* to allow or *no* to deny.`, cwd: p.cwd,
+        detail: `Tool: ${p.tool}${summarize(p.input) ? ' — ' + summarize(p.input) : ''}${p.via ? `\nStarted from the API (key "${p.via}")` : ''}\n\nReply *yes* to allow or *no* to deny.`, cwd: p.cwd,
         permission: { id: p.id, tool: p.tool }
       });
     });
     this.runner.on('permission_resolved', p => { if (this.openPerm?.id === p.id) this.openPerm = null; });
     this.runner.on('run', r => {
+      // work an API key started: the program that asked gets the answer, so no "finished" alert
+      // unless that key asks for one (approvals always alert, above)
+      if (r.via && !r.via.alerts) return;
       if (r.result && !r.result.isError) this.event('done', r.sessionId, { detail: clip(r.result.text, 300), cwd: r.cwd });
       else if (r.result?.isError || (r.status === 'exited' && r.lastError)) this.event('error', r.sessionId, { detail: clip(r.result?.text || r.lastError, 300), cwd: r.cwd });
     });
@@ -287,8 +290,13 @@ export class Notifier {
     } catch { return ''; }
   }
 
+  // An API turn sent into a session open on the computer: its "finished" alert is skipped, as the
+  // program that asked gets the answer (unless the key wants alerts, in which case this isn't called).
+  quietDone(sessionId, ms) { (this.quietUntil ||= new Map()).set(sessionId, Date.now() + ms); }
+
   event(kind, sessionId, { detail = '', cwd = '', title = '', force = false, permission = null } = {}) {
     if (!this.active || !this.wants(kind) || !sessionId) return false;
+    if ((kind === 'done' || kind === 'error') && (this.quietUntil?.get(sessionId) || 0) > Date.now()) return false;
     if (this.isMuted(cwd) || this.mutedSessions.has(sessionId)) return false;
     if (inQuiet(this.quiet, this.now()) && !this.quietAllow.has(kind)) {
       this.held.push({ kind, sessionId, title, cwd, at: Date.now() });

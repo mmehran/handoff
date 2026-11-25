@@ -226,14 +226,21 @@ export class KeyStore {
   overBudget(k) { return !!(k.dailyBudgetUsd && this.today(k.id).costUsd >= k.dailyBudgetUsd); }
 
   // ----- sessions an API key started -----
-  markSession(sessionId, k) {
+  // forkOf: the session this one is a copy of (a limited key's own copy of someone else's session)
+  markSession(sessionId, k, { forkOf = null } = {}) {
     if (!sessionId || this.sessions[sessionId]) return;
-    this.sessions[sessionId] = { keyId: k.id, keyName: k.name, at: Date.now() };
+    this.sessions[sessionId] = { keyId: k.id, keyName: k.name, at: Date.now(), ...(forkOf ? { forkOf } : {}) };
     const ids = Object.keys(this.sessions);
     if (ids.length > 5000) for (const id of ids.slice(0, ids.length - 5000)) delete this.sessions[id];
     this.later('sessions', () => writePrivate(this.sessionsFile, this.sessions));
   }
   sessionKey(sessionId) { return this.sessions[sessionId] || null; }
+  // a key's latest copy of a session, so it keeps talking in the same copy
+  forkFor(keyId, sessionId) {
+    let best = null;
+    for (const [id, s] of Object.entries(this.sessions)) if (s.keyId === keyId && s.forkOf === sessionId && (!best || s.at > best.at)) best = { id, at: s.at };
+    return best?.id || null;
+  }
 
   // ----- notes about turns, kept across restarts -----
   noteTurn(t) {

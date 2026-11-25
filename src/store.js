@@ -103,7 +103,7 @@ export function parseQuestions(input) {
   })).filter(q => q.question || q.options.length);
 }
 
-function toolSummary(name, input = {}) {
+export function toolSummary(name, input = {}) {
   // a search shows what it looked for (pattern) before where (path)
   const v = input.command || input.file_path || input.pattern || input.path || input.url || input.query || input.description || input.prompt || '';
   return String(v).split('\n')[0].slice(0, 160);

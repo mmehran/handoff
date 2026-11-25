@@ -9,25 +9,11 @@ import { httpErr, EFFORTS } from './runner.js';
 import { projectName, UUID_RE } from './store.js';
 import { json, clientIp } from './http-util.js';
 import { TOOL_PRESETS, SCOPES } from './apikeys.js';
+import { API_PREFIX, apiErr, sendError, isWithin, keyDir } from './api-util.js';
+import { addSending } from './api-send.js';
 
-export const API_PREFIX = '/api/v1';
+export { API_PREFIX, apiErr, sendError, isWithin };
 const VERSION = (() => { try { return JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version; } catch { return '?'; } })();
-const CODES = { 400: 'invalid_request', 401: 'unauthorized', 402: 'budget_exceeded', 403: 'forbidden', 404: 'not_found', 405: 'method_not_allowed', 409: 'conflict', 413: 'too_large', 415: 'unsupported_media_type', 429: 'rate_limited', 501: 'not_supported', 502: 'claude_error', 503: 'unavailable', 504: 'timeout' };
-
-// an error with its own code (and extra fields) for the { error } answer
-export function apiErr(status, code, message, extra = {}) { const e = httpErr(status, message); e.code = code; e.extra = extra; return e; }
-
-export function sendError(res, e) {
-  const status = e.status || 500;
-  if (e.retryAfter) res.setHeader('Retry-After', String(e.retryAfter));
-  json(res, status, { error: { code: e.code || CODES[status] || 'internal_error', message: e.status ? e.message : 'internal error', ...(e.extra || {}) } });
-}
-
-export const isWithin = (child, root) => {
-  if (!child || !root) return false;
-  const rel = path.relative(path.resolve(root), path.resolve(child));
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-};
 
 export function createApi(core, { log = console.log } = {}) {
   const { cfg, store, runner, activity, keys, audit } = core;
@@ -37,7 +23,8 @@ export function createApi(core, { log = console.log } = {}) {
   const ctxOf = {}; // filled by the parts that add routes (turns, files, ...)
 
   // ---------- helpers every route uses ----------
-  const inScope = (k, cwd) => !k.projects || (!!cwd && k.projects.some(p => isWithin(cwd, p)));
+  // a key sees its projects, and its own folder for sessions started without a project
+  const inScope = (k, cwd) => !k.projects || (!!cwd && (k.projects.some(p => isWithin(cwd, p)) || isWithin(cwd, keyDir(cfg, k))));
   const webUrl = id => (cfg.web && cfg.publicHostname && id ? `https://${cfg.publicHostname}/#/s/${id}` : null);
   const iso = t => (t ? new Date(t).toISOString() : null);
 
@@ -265,7 +252,9 @@ export function createApi(core, { log = console.log } = {}) {
     }
   }
 
-  return { handle, route, inScope, sessionFor, sessionView, findProject, webUrl, ctxOf, statusOf, iso, version: VERSION };
+  const api = { handle, route, inScope, sessionFor, sessionView, findProject, webUrl, ctxOf, statusOf, iso, version: VERSION };
+  api.turns = addSending(api, core); // sending prompts and getting answers (api-send.js)
+  return api;
 }
 
 export { SCOPES };

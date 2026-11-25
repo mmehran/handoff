@@ -753,14 +753,14 @@ function renderPerms() {
       return h('div', { class: 'perm' },
         h('div', { class: 'row' }, h('b', {}, '📋 Claude has a plan'), h('span', { class: 'grow' }),
           h('a', { href: `#/s/${p.sessionId}`, class: 'small muted' }, 'open session')),
-        h('div', { class: 'small muted mono' }, p.cwd),
+        h('div', { class: 'small muted mono' }, p.cwd), apiChip(p.via),
         h('div', { class: 'msg assistant plan-text' }, md(p.plan || '')),
         planActions(p));
     }
     return h('div', { class: 'perm' },
       h('div', { class: 'row' }, h('b', {}, `Allow ${p.tool}?`), h('span', { class: 'grow' }),
         h('a', { href: `#/s/${p.sessionId}`, class: 'small muted' }, 'open session')),
-      h('div', { class: 'small muted mono' }, p.cwd),
+      h('div', { class: 'small muted mono' }, p.cwd), apiChip(p.via),
       h('pre', { text: p.input }),
       h('div', { class: 'row' },
         h('button', { class: 'btn ok', onclick: () => decide(true) }, 'Allow'),
