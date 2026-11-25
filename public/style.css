@@ -438,6 +438,23 @@ pre.diff > span { display: block; padding: 0 14px; }
 textarea.commit-msg { min-height: 78px; resize: vertical; line-height: 1.45; }
 .sheet-text { margin: 0 0 8px; color: var(--muted); line-height: 1.5; }
 .diff-path { color: var(--muted); overflow-wrap: anywhere; margin-top: -4px; }
+/* comments on diff lines: line numbers, a tap target per line, the comment under its line */
+pre.diff .ln { display: inline-block; width: var(--ln-w, 2ch); margin-right: 12px; text-align: right; color: var(--faint); user-select: none; }
+pre.diff > span.cm { cursor: pointer; }
+pre.diff > span.cm:hover, pre.diff > span.has-note { box-shadow: inset 3px 0 0 var(--accent); }
+pre.diff > span.d-note {
+  position: sticky; left: 14px; width: min(560px, calc(100vw - 72px)); margin: 4px 14px 6px; padding: 8px 11px; cursor: pointer;
+  white-space: pre-wrap; overflow-wrap: anywhere; font: 13.5px/1.45 var(--sans); color: var(--text);
+  background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: var(--radius);
+}
+.review-bar {
+  position: sticky; bottom: max(12px, env(safe-area-inset-bottom)); z-index: 4; display: flex; align-items: center; gap: 10px;
+  padding: 7px 7px 7px 16px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 999px; box-shadow: var(--shadow-2);
+}
+.review-item { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.review-item .row { flex-wrap: nowrap; } .review-item .row > .grow { min-width: 0; overflow-wrap: anywhere; }
+.review-code { margin: 0; padding: 6px 9px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12.5px/1.45 var(--mono); background: var(--surface-2); border-radius: var(--radius-s); }
+.review-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ---------- touch screens and small phones ---------- */
 @media (pointer: coarse) {

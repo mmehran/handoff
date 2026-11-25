@@ -1051,6 +1051,27 @@ function confirmSheet(title, text, label, action) {
   return close;
 }
 
+// Comments on diff lines, kept on this device (per chat) until they are sent to Claude as one message
+const reviewKey = id => `handoff.review.${id}`;
+function loadNotes(id) {
+  try { const v = JSON.parse(localStorage.getItem(reviewKey(id)) || '[]'); return Array.isArray(v) ? v.filter(n => n && n.path && n.text) : []; } catch { return []; }
+}
+function saveNotes(id, list) {
+  try { list.length ? localStorage.setItem(reviewKey(id), JSON.stringify(list)) : localStorage.removeItem(reviewKey(id)); } catch { /* private mode */ }
+}
+const noteWhere = n => `${n.side === 'old' ? 'removed line' : 'line'} ${n.num}`;
+function reviewMessage(list, extra = '') {
+  const files = [...new Set(list.map(n => n.path))];
+  const parts = ['My comments on the changes, line by line (the file, the line as it is in the diff, then the comment):'];
+  for (const file of files) {
+    for (const n of list.filter(x => x.path === file).sort((a, b) => a.num - b.num)) {
+      parts.push(`${file}, ${noteWhere(n)}:\n> ${n.code.trim() || '(blank line)'}\n${n.text.trim()}`);
+    }
+  }
+  if (extra.trim()) parts.push(extra.trim());
+  return parts.join('\n\n');
+}
+
 function changesPanel(id) {
   const el = h('div', { class: 'files' });
   const link = (key, p) => `#/s/${id}?${key}=${encodeURIComponent(p)}`;
@@ -1060,12 +1081,55 @@ function changesPanel(id) {
   const msg = h('textarea', { class: 'commit-msg', rows: '3', placeholder: 'Commit message', 'aria-label': 'Commit message' });
   let last = null;          // the latest list: the diff page words Discard by the file's status
   let pushed = null;        // the latest push, kept on screen (with its pull request link) across refreshes
-  let seq = 0, shown = '';
+  let seq = 0, shown = '', cur = new URLSearchParams('changes=');
   const refresh = () => show(new URLSearchParams('changes='));
+  const redraw = () => show(cur);
   const fail = (box, x) => { if (x.message !== 'unauthorized') { box.className = 'err'; box.textContent = x.message; } };
 
-  const fileLabel = f => [h('span', { class: `badge ${f.status}`, title: BADGE[f.status][1] }, BADGE[f.status][0]),
-    h('span', { class: 'fname mono' }, f.path), f.from ? h('span', { class: 'fmeta' }, `was ${f.from}`) : null];
+  const fileLabel = f => {
+    const notes = loadNotes(id).filter(n => n.path === f.path).length;
+    return [h('span', { class: `badge ${f.status}`, title: BADGE[f.status][1] }, BADGE[f.status][0]),
+      h('span', { class: 'fname mono' }, f.path), f.from ? h('span', { class: 'fmeta' }, `was ${f.from}`) : null,
+      notes ? h('span', { class: 'fmeta', title: `${plural(notes, 'comment')} for Claude` }, `💬 ${notes}`) : null];
+  };
+
+  // all comments in this chat, reviewed and sent to Claude as one message
+  const sendReview = () => {
+    const extra = h('textarea', { rows: '2', placeholder: 'Anything else to tell Claude? (optional)' });
+    const err = h('div', { class: 'err' });
+    const items = h('div', { class: 'list review-list' });
+    const draw = () => {
+      const list = loadNotes(id);
+      if (!list.length) { close(); redraw(); return; }
+      items.replaceChildren(...list.map((n, i) => h('div', { class: 'review-item' },
+        h('div', { class: 'row' }, h('span', { class: 'grow mono small' }, `${n.path} · ${noteWhere(n)}`),
+          h('button', { class: 'icon', 'aria-label': 'Remove this comment', onclick: () => { const l = loadNotes(id); l.splice(i, 1); saveNotes(id, l); draw(); } }, '×')),
+        h('div', { class: 'review-code' }, n.code.trim() || ' '),
+        h('div', { class: 'review-text' }, n.text))));
+    };
+    const go = h('button', { class: 'btn primary', onclick: async () => {
+      go.disabled = true; err.textContent = '';
+      try {
+        await api('POST', `/api/sessions/${id}/message`, { text: reviewMessage(loadNotes(id), extra.value) });
+        saveNotes(id, []);
+        close();
+        toast('Your comments are on their way to Claude');
+        location.hash = `#/s/${id}`;
+      } catch (x) { if (x.message !== 'unauthorized') err.textContent = x.message; go.disabled = false; }
+    } }, 'Send to Claude');
+    const clear = h('button', { class: 'btn danger', onclick: () => { saveNotes(id, []); close(); redraw(); } }, 'Clear all');
+    const close = openSheet(`${plural(loadNotes(id).length, 'comment')} for Claude`, items, extra, err,
+      h('div', { class: 'row' }, clear, h('span', { class: 'grow' }), go));
+    draw();
+  };
+  const reviewBar = () => {
+    const list = loadNotes(id);
+    if (!list.length) return null;
+    const files = new Set(list.map(n => n.path)).size;
+    return h('div', { class: 'review-bar' },
+      h('span', { class: 'grow' }, `💬 ${plural(list.length, 'comment')}`, files > 1 ? h('span', { class: 'muted' }, ` on ${files} files`) : null),
+      h('button', { class: 'btn primary sm', onclick: () => sendReview() }, 'Review and send'));
+  };
 
   const pushBox = d => {
     const out = h('div', { class: 'small muted' });
@@ -1165,17 +1229,72 @@ function changesPanel(id) {
       d.truncated && h('div', { class: 'small muted' }, 'Only the first 500 files are shown.'),
       canCommit && h('div', { class: 'card git-card' }, msg, h('div', { class: 'row' }, draftBtn, h('span', { class: 'grow' }), commitBtn), note),
       gitOn && d.detached && d.files.length > 0 && h('div', { class: 'small muted' }, 'Not on a branch, so committing from here is off. Check out a branch on the laptop first.'),
-      gitOn && d.remotes > 0 && !d.detached && (d.ahead > 0 || pushed) && pushBox(d)].filter(Boolean));
+      gitOn && d.remotes > 0 && !d.detached && (d.ahead > 0 || pushed) && pushBox(d), reviewBar()].filter(Boolean));
+  };
+
+  // a comment on one line of the diff: added, changed or deleted in a sheet
+  const editNote = (d, line, i) => {
+    const list = loadNotes(id);
+    const old = i == null ? null : list[i];
+    const ta = h('textarea', { rows: '3', placeholder: 'What should Claude change or explain here?', 'aria-label': 'Comment' });
+    ta.value = old?.text || '';
+    const done = list2 => { saveNotes(id, list2); close(); redraw(); };
+    const save = h('button', { class: 'btn primary', onclick: () => {
+      const text = ta.value.trim();
+      if (!text) return ta.focus();
+      const l = loadNotes(id);
+      if (old) l[i] = { ...old, text }; else l.push({ path: d.path, side: line.side, num: line.num, code: line.code, text, at: Date.now() });
+      done(l);
+    } }, old ? 'Save' : 'Add comment');
+    const del = old ? h('button', { class: 'btn danger', onclick: () => { const l = loadNotes(id); l.splice(i, 1); done(l); } }, 'Delete') : null;
+    const close = openSheet(`${d.path.split('/').pop()} · ${noteWhere(line)}`, h('div', { class: 'review-code' }, line.code || ' '), ta,
+      h('div', { class: 'row' }, del, h('span', { class: 'grow' }), h('button', { class: 'btn', onclick: () => close() }, 'Cancel'), save));
+    ta.focus();
   };
 
   const renderDiff = d => {
+    const keepX = el.querySelector('.fcode')?.scrollLeft || 0;
     const pre = h('pre', { class: 'diff' });
+    const lines = [];       // the lines that can take a comment: { side: 'new' | 'old', num, code, el }
+    let at = null, inHunk = false, widest = 1;
     for (const line of d.diff.split('\n')) {
-      const cls = /^(diff |index |--- |\+\+\+ |new file|deleted file|similarity|rename |Binary )/.test(line) ? 'd-meta'
-        : line.startsWith('@@') ? 'd-hunk' : line.startsWith('+') ? 'd-add' : line.startsWith('-') ? 'd-del' : '';
+      let cls = '', num = null, side = null;
+      const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (hunk) { cls = 'd-hunk'; at = { old: +hunk[1], new: +hunk[2] }; inHunk = true; }
+      else if (inHunk && line.startsWith('+')) { cls = 'd-add'; side = 'new'; num = at.new++; }
+      else if (inHunk && line.startsWith('-')) { cls = 'd-del'; side = 'old'; num = at.old++; }
+      else if (inHunk && line.startsWith(' ')) { side = 'new'; num = at.new++; at.old++; }
+      else if (inHunk && line.startsWith('\\')) cls = 'd-meta'; // "\ No newline at end of file"
+      else if (/^(diff |index |--- |\+\+\+ |new file|deleted file|similarity|rename |Binary |old mode|new mode)/.test(line)) { cls = 'd-meta'; inHunk = false; }
+      else if (line.startsWith('+')) cls = 'd-add';
+      else if (line.startsWith('-')) cls = 'd-del';
       const s = document.createElement('span'); // one block per line, so added/removed colour spans the whole line
-      s.className = cls || 'd-ctx'; s.textContent = line || ' '; pre.append(s);
+      s.className = cls || 'd-ctx';
+      s.append(h('span', { class: 'ln' }, num == null ? '' : String(num)), line || ' ');
+      if (num != null) {
+        widest = Math.max(widest, String(num).length);
+        s.classList.add('cm');
+        s.dataset.i = String(lines.length);
+        lines.push({ side, num, code: line.slice(1), el: s });
+      }
+      pre.append(s);
     }
+    pre.style.setProperty('--ln-w', widest + 'ch');
+    // comments under their lines: the same line if it still reads the same, else where that text went
+    loadNotes(id).forEach((n, i) => {
+      if (n.path !== d.path) return;
+      const same = l => l.side === n.side && l.code === n.code;
+      const line = lines.find(l => same(l) && l.num === n.num) || lines.find(same) || lines.find(l => l.side === n.side && l.num === n.num);
+      const note = h('span', { class: 'd-note', 'data-n': String(i) }, '💬 ', n.text);
+      if (line) { line.el.classList.add('has-note'); line.el.after(note); } else pre.append(note);
+    });
+    pre.addEventListener('click', e => {
+      if (String(getSelection?.() || '')) return; // selecting text to copy, not tapping
+      const note = e.target.closest('.d-note');
+      if (note) { const n = loadNotes(id)[+note.dataset.n]; const line = n && (lines.find(l => l.side === n.side && l.num === n.num) || n); return n && editNote(d, line, +note.dataset.n); }
+      const s = e.target.closest('span.cm');
+      if (s) editNote(d, lines[+s.dataset.i]);
+    });
     const info = last?.files?.find(f => f.path === d.path);
     const isNew = info ? ['untracked', 'added'].includes(info.status) : /^--- \/dev\/null$/m.test(d.diff);
     const name = d.path.split('/').pop();
@@ -1187,16 +1306,21 @@ function changesPanel(id) {
       toast(`Discarded the changes to ${name}`);
       location.hash = link('changes', '');
     }) }, 'Discard') : null;
+    const code = d.diff.trim() ? h('div', { class: 'fcode' }, pre) : null;
     el.replaceChildren(...[
       h('div', { class: 'row' }, h('a', { class: 'btn', href: link('changes', '') }, '← All changes'), h('span', { class: 'grow' }),
         h('a', { class: 'btn', href: `#/s/${id}?file=${encodeURIComponent(d.path)}` }, 'Open file'), discardBtn),
       h('div', { class: 'mono small diff-path' }, d.path),
       d.truncated && h('div', { class: 'notice' }, 'This diff is large: only the first 1 MB is shown.'),
-      d.diff.trim() ? h('div', { class: 'fcode' }, pre) : h('div', { class: 'empty' }, 'No differences from the last commit.')].filter(Boolean));
+      lines.length && h('div', { class: 'small muted' }, 'Tap a line to leave Claude a comment on it.'),
+      code || h('div', { class: 'empty' }, 'No differences from the last commit.'),
+      reviewBar()].filter(Boolean));
+    if (code && keepX) code.scrollLeft = keepX;
   };
 
   const show = async params => {
     const my = ++seq;
+    cur = params;
     const kind = params.has('diff') ? 'diff:' + params.get('diff') : 'list';
     if (kind !== shown) el.replaceChildren(h('div', { class: 'muted small' }, 'Loading…')); // a refresh keeps what is on screen
     shown = kind;
