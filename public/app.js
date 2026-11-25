@@ -1100,7 +1100,7 @@ function overviewPanel(id, { getActivity, inProject }) {
       h('span', { class: 'ov-ok ' + (c.ok === false ? 'bad' : c.ok ? 'good' : ''), title: c.ok === false ? 'Failed' : c.ok ? 'Succeeded' : 'Running or no result' }, c.ok === false ? '✗' : c.ok ? '✓' : '…'),
       h('div', { class: 'grow' }, c.description ? h('div', { class: 'small' }, c.description) : null, h('code', { class: 'ov-cmdline' }, c.command)),
       h('span', { class: 'fmeta' }, ago(c.ts))));
-    const agents = a.agents.map(x => h('div', { class: 'frow ov-agent', 'data-tool-use': x.toolUseId },
+    const agents = a.agents.map(x => h('button', { class: 'frow ov-agent', type: 'button', onclick: () => showSubagent(id, x.toolUseId, x, inProject) },
       h('span', { class: 'ficon' }, '🤖'),
       h('span', { class: 'fname' }, x.description || x.type, h('span', { class: 'small muted' }, ' · ' + x.type)),
       h('span', { class: 'chip ' + ({ done: 'idle', failed: 'error', running: 'running', background: 'running' }[x.status] || '') }, x.status === 'background' ? 'running' : x.status)));
@@ -1123,6 +1123,40 @@ function overviewPanel(id, { getActivity, inProject }) {
     ].filter(Boolean));
   };
   return { el, render };
+}
+
+// ---------- sub-agent runs: what a sub-agent did, opened from its row in the chat or the overview ----------
+async function showSubagent(sessionId, toolUseId, known = {}, rel = s => s) {
+  const body = h('div', { class: 'ctx-msgs' }, h('div', { class: 'muted small' }, 'Loading…'));
+  const meta = h('div', { class: 'small muted' }, [known.type, known.status].filter(Boolean).join(' · '));
+  openSheet(known.description ? `🤖 ${known.description}` : '🤖 Sub-agent run', meta, body);
+  try {
+    const list = await api('GET', `/api/sessions/${sessionId}/agents`);
+    const run = list.find(a => a.toolUseId && a.toolUseId === toolUseId) || (known.agentId && list.find(a => a.agentId === known.agentId));
+    if (!run) return body.replaceChildren(h('div', { class: 'empty' }, 'This run\'s own messages aren\'t saved (older Claude Code versions keep only its result, shown in the chat).'));
+    meta.textContent = [run.type || known.type, known.status, `updated ${ago(run.mtime)}`].filter(Boolean).join(' · ');
+    const t = await api('GET', `/api/sessions/${sessionId}/agents/${run.agentId}`);
+    body.replaceChildren(...[t.truncated ? h('div', { class: 'notice' }, 'A long run: only its latest part is shown.') : null, ...plainEvents(t.events, rel)].filter(Boolean));
+  } catch (x) { body.replaceChildren(h('div', { class: 'empty' }, x.message)); }
+}
+// a read-only list of messages and tool calls (for sub-agent runs)
+function plainEvents(events, rel = s => s) {
+  const tools = new Map(), out = [];
+  for (const e of events) {
+    if (e.kind === 'user') out.push(e.text.length > 700
+      ? h('details', { class: 'msg user prompt' }, h('summary', {}, e.text.slice(0, 220).trim() + '…'), h('div', { class: 'pre' }, e.text))
+      : h('div', { class: 'msg user' }, e.text));
+    else if (e.kind === 'assistant') out.push(h('div', { class: 'msg assistant' }, md(e.text)));
+    else if (e.kind === 'system') out.push(h('div', { class: 'msg system', text: e.text }));
+    else if (e.kind === 'tool_use' || e.kind === 'plan' || e.kind === 'question') {
+      const d = h('details', { class: 'tool' }, h('summary', {}, h('span', { class: 'tsum' }, h('b', {}, e.name || e.kind), ' ', rel(e.summary || ''))), e.input ? h('pre', { text: e.input }) : null);
+      tools.set(e.id, d); out.push(d);
+    } else if (e.kind === 'tool_result') {
+      const d = tools.get(e.toolUseId);
+      if (d) { d.append(h('div', { class: 'label' }, e.isError ? 'error' : 'result'), h('pre', { text: e.text || '(empty)' })); if (e.isError) d.classList.add('err'); }
+    }
+  }
+  return out.length ? out : [h('div', { class: 'empty' }, 'No messages yet.')];
 }
 
 // ---------- quick replies: one tap sends a common answer; the list can be edited ----------
@@ -1312,7 +1346,13 @@ async function sessionView(id, params = new URLSearchParams()) {
       return card;
     }
     if (e.kind === 'tool_use') {
-      const d = h('details', { class: 'tool' }, h('summary', {}, h('b', {}, e.name), ' ', inProject(e.summary || '')), h('div', { class: 'label' }, 'input'), h('pre', { text: e.input }));
+      const isAgent = e.name === 'Agent' || e.name === 'Task';
+      const open = isAgent ? h('button', { class: 'btn sm agent-open', type: 'button', onclick: ev => {
+        ev.preventDefault(); ev.stopPropagation(); // don't fold the row open as well
+        showSubagent(id, e.id, activity.agents.find(x => x.toolUseId === e.id) || {}, inProject);
+      } }, 'View run') : null;
+      const d = h('details', { class: 'tool' + (isAgent ? ' agent' : '') }, h('summary', {}, h('span', { class: 'tsum' }, h('b', {}, isAgent ? `🤖 ${e.name}` : e.name), ' ', inProject(e.summary || '')), open),
+        h('div', { class: 'label' }, 'input'), h('pre', { text: e.input }));
       tools.set(e.id, d);
       return d;
     }

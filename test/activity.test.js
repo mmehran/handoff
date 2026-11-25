@@ -80,3 +80,25 @@ test('a plan shows as a plan event with its text', () => {
   const ev = normalize({ type: 'assistant', uuid: 'u', message: { content: [{ type: 'tool_use', id: 'p', name: 'ExitPlanMode', input: { plan: '# Plan' } }] } });
   assert.deepEqual(ev.map(e => [e.kind, e.id, e.text]), [['plan', 'p', '# Plan']]);
 });
+
+test('sub-agent runs: listed from their files next to the chat, and readable', async () => {
+  const home = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-agents-')));
+  const id = crypto.randomUUID();
+  const dir = path.join(home, 'projects', 'p');
+  fs.mkdirSync(path.join(dir, id, 'subagents'), { recursive: true });
+  fs.writeFileSync(path.join(dir, id + '.jsonl'), use('a1', 'Agent', { description: 'Find callers', prompt: 'Find them' }));
+  const sub = path.join(dir, id, 'subagents');
+  fs.writeFileSync(path.join(sub, 'agent-abc123.meta.json'), JSON.stringify({ agentType: 'Explore', description: 'Find callers', toolUseId: 'a1' }));
+  fs.writeFileSync(path.join(sub, 'agent-abc123.jsonl'),
+    line({ isSidechain: true, type: 'user', uuid: 's1', message: { role: 'user', content: 'Find every caller of total()' } }) +
+    line({ isSidechain: true, type: 'assistant', uuid: 's2', message: { content: [{ type: 'text', text: 'Two callers.' }] } }));
+  fs.writeFileSync(path.join(sub, 'agent-old.jsonl'), ''); // no meta (older versions)
+  const store = new Store({ claudeHome: home });
+  const list = await store.subagents(id);
+  assert.deepEqual(list.map(a => [a.agentId, a.type, a.toolUseId]).sort(), [['abc123', 'Explore', 'a1'], ['old', '', '']]);
+  const t = await store.readSubagent(id, 'abc123');
+  assert.deepEqual(t.events.map(e => [e.kind, e.text]), [['user', 'Find every caller of total()'], ['assistant', 'Two callers.']]);
+  assert.equal(await store.readSubagent(id, '../../etc'), null);
+  assert.equal(await store.readSubagent(id, 'missing'), null);
+  assert.deepEqual(await store.subagents(crypto.randomUUID()), null);
+});

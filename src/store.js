@@ -29,9 +29,9 @@ function stripReminders(s) {
 }
 
 // Turn one transcript/stream-json record into zero or more display events.
-export function normalize(o) {
+export function normalize(o, { sidechain = false } = {}) {
   const out = [];
-  if (!o || typeof o !== 'object' || o.isSidechain) return out;
+  if (!o || typeof o !== 'object' || (o.isSidechain && !sidechain)) return out;
   const base = { uuid: o.uuid, ts: o.timestamp };
   if (o.type === 'user' && o.message) {
     // a prompt delivered from this app into a running desktop/CLI session is stored as a hidden peer message
@@ -101,7 +101,8 @@ export function parseQuestions(input) {
 }
 
 function toolSummary(name, input = {}) {
-  const v = input.command || input.file_path || input.path || input.pattern || input.url || input.query || input.description || input.prompt || '';
+  // a search shows what it looked for (pattern) before where (path)
+  const v = input.command || input.file_path || input.pattern || input.path || input.url || input.query || input.description || input.prompt || '';
   return String(v).split('\n')[0].slice(0, 160);
 }
 
@@ -340,6 +341,45 @@ export class Store {
       if (first < 0) return { events: events.slice(-around * 2) };
       return { events: events.slice(Math.max(0, first - around), last + 1 + around) };
     }
+  }
+
+  // Sub-agent runs of a session. Claude Code keeps each one in <session>/subagents/agent-<id>.jsonl,
+  // next to agent-<id>.meta.json, which says what kind of agent it was and which Agent call started it.
+  async subagents(id) {
+    const file = await this.sessionFile(id);
+    if (!file) return null;
+    const dir = path.join(file.slice(0, -6), 'subagents');
+    let names = [];
+    try { names = await fsp.readdir(dir); } catch { return []; }
+    const out = [];
+    for (const n of names) {
+      const m = /^agent-([A-Za-z0-9_-]{1,64})\.jsonl$/.exec(n);
+      if (!m) continue;
+      let st, meta = {};
+      try { st = await fsp.stat(path.join(dir, n)); } catch { continue; }
+      try { meta = JSON.parse(await fsp.readFile(path.join(dir, `agent-${m[1]}.meta.json`), 'utf8')) || {}; } catch { /* older versions write no meta */ }
+      out.push({ agentId: m[1], type: String(meta.agentType || ''), description: String(meta.description || '').slice(0, 300), toolUseId: String(meta.toolUseId || ''), size: st.size, mtime: st.mtimeMs });
+    }
+    return out.sort((a, b) => b.mtime - a.mtime);
+  }
+
+  // One sub-agent run's messages (its latest part when it is very long).
+  async readSubagent(id, agentId, maxBytes = 2 * 1024 * 1024) {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(agentId)) return null;
+    const file = await this.sessionFile(id);
+    if (!file) return null;
+    const f = path.join(file.slice(0, -6), 'subagents', `agent-${agentId}.jsonl`);
+    let size;
+    try { size = (await fsp.stat(f)).size; } catch { return null; }
+    const start = Math.max(0, size - maxBytes);
+    let text = (await readSlice(f, start, size - start)).toString('utf8');
+    if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+    const events = [];
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      try { events.push(...normalize(JSON.parse(line), { sidechain: true })); } catch { /* partial line */ }
+    }
+    return { events, truncated: start > 0, size };
   }
 
   // Events appended after byte offset `from` (complete lines only), for clients that can't stream.

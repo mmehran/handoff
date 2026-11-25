@@ -303,6 +303,13 @@ details.tool summary::before { content: "▸"; display: inline-block; width: 1em
 details.tool[open] summary::before { transform: rotate(90deg); }
 details.tool summary:hover { background: var(--surface-2); }
 details.tool summary b { color: var(--text); font-weight: 620; }
+details.tool summary { display: flex; align-items: center; gap: 8px; }
+details.tool summary .tsum { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+details.tool .agent-open { flex: none; min-height: 26px; padding: 2px 11px; font-size: 12px; box-shadow: none; }
+button.frow { width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--border); color: inherit; font: inherit; cursor: pointer; }
+button.frow:first-child { border-top: 0; } button.frow:hover { background: var(--surface-2); }
+details.msg.user.prompt summary { cursor: pointer; list-style: none; }
+details.msg.user.prompt[open] summary { display: none; }
 details.tool .label, details.tool > pre { margin-left: 12px; margin-right: 12px; }
 details.tool > pre, .msg pre:not(.codeblock pre) { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-s); padding: 8px 10px; overflow-x: auto; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
 details.tool > pre:last-child { margin-bottom: 12px; }

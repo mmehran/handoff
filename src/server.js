@@ -219,6 +219,14 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
     json(res, 200, a || { todos: [], plan: null, files: [], commands: [], commandCount: 0, agents: [], tools: 0, prompts: 0, first: 0, last: 0 });
   });
 
+  // sub-agent runs: the list, and one run's messages
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/agents$/, async (req, res, ctx, m) => json(res, 200, (await store.subagents(m[1])) || []));
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/agents\/([A-Za-z0-9_-]{1,64})$/, async (req, res, ctx, m) => {
+    const t = await store.readSubagent(m[1], m[2]);
+    if (!t) return json(res, 404, { error: 'sub-agent run not found' });
+    json(res, 200, t);
+  });
+
   // live tail of one session transcript (Server-Sent Events)
   route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/stream$/, (req, res, ctx, m) => {
     const id = m[1];
