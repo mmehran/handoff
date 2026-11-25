@@ -29,10 +29,12 @@ function which(bin) {
 //    restart it and allow longer next time (up to 5 min)
 //  - once connected: restart only if /ready has failed continuously for 30s
 //  - cloudflared exited -> start again (5s, backing off to 60s if it keeps crashing)
-//  - a 5s tick arriving >20s late means the laptop slept -> restart at once
+//  - a 5s tick arriving >20s late means the laptop slept, or the machine was too busy to run timers:
+//    a connected tunnel gets a public check at once and is restarted if that misses; a cloudflared still
+//    connecting is left to its grace period (restarting it on every stall of a busy machine means it never connects)
 //  - every 60s fetch https://<hostname>/api/health and check it reaches *this* server; 3 misses -> restart
-export function startNamedTunnel({ token, hostname, port, healthId, log }) {
-  const bin = which('cloudflared');
+// bin, spawnFn and fetchFn are there for tests.
+export function startNamedTunnel({ token, hostname, port, healthId, log, bin = which('cloudflared'), spawnFn = spawn, fetchFn = fetch }) {
   if (!bin) { log('[tunnel] cloudflared not found. Install it: winget install --id Cloudflare.cloudflared'); return null; }
   const metrics = '127.0.0.1:20241';
   const urlFile = path.join(DATA_DIR, 'public-url.txt');
@@ -46,7 +48,7 @@ export function startNamedTunnel({ token, hostname, port, healthId, log }) {
   const launch = (why) => {
     log(`[tunnel] starting cloudflared (${why}); allowing ${grace / 1000}s to connect`);
     startedAt = Date.now(); connected = false; downSince = 0;
-    proc = spawn(bin, ['tunnel', '--no-autoupdate', '--metrics', metrics, 'run'], {
+    proc = spawnFn(bin, ['tunnel', '--no-autoupdate', '--metrics', metrics, 'run'], {
       windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, TUNNEL_TOKEN: token }
     });
     const p = proc;
@@ -84,11 +86,13 @@ export function startNamedTunnel({ token, hostname, port, healthId, log }) {
   const tick = async () => {
     if (stopped) return;
     const now = Date.now();
-    const slept = now - lastTick > 20e3;
+    const late = now - lastTick > 20e3;
+    if (late) log(`[tunnel] watchdog was paused for ${Math.round((now - lastTick) / 1000)}s (laptop asleep, or machine too busy)`);
     lastTick = now;
-    if (slept) { grace = GRACE; return restart('laptop woke from sleep'); }
     if (!proc) { if (now >= nextStart) launch('watchdog'); return; }
     if (!connected) {
+      // A late tick alone doesn't restart a cloudflared that is still connecting: only its grace period
+      // counts, and a long sleep runs past that anyway.
       if (now - startedAt > grace) {
         const waited = grace;
         grace = Math.min(grace * 2, MAX_GRACE); // network is slow: be more patient next time
@@ -96,24 +100,27 @@ export function startNamedTunnel({ token, hostname, port, healthId, log }) {
       }
       return;
     }
+    if (late) return publicCheck(1); // keep it if https://<hostname> still reaches us, else restart at once
     let ok = false;
-    try { ok = (await fetch(`http://${metrics}/ready`, { signal: AbortSignal.timeout(3000) })).ok; } catch { /* down */ }
+    try { ok = (await fetchFn(`http://${metrics}/ready`, { signal: AbortSignal.timeout(3000) })).ok; } catch { /* down */ }
     if (ok) { if (downSince) log('[tunnel] connection back'); downSince = 0; return; }
     if (!downSince) { downSince = now; log('[tunnel] lost connection to Cloudflare; waiting for cloudflared to reconnect'); }
     else if (now - downSince > DOWN_LIMIT) restart(`no connection to Cloudflare for ${DOWN_LIMIT / 1000}s`);
   };
-  const publicCheck = async () => {
-    if (stopped || !proc || !connected) return;
+  const publicCheck = async (limit = 3) => {
+    const p = proc;
+    if (stopped || !p || !connected) return;
     try {
-      const r = await fetch(`https://${hostname}/api/health`, { signal: AbortSignal.timeout(10000), headers: { 'Cache-Control': 'no-cache' } });
+      const r = await fetchFn(`https://${hostname}/api/health`, { signal: AbortSignal.timeout(10000), headers: { 'Cache-Control': 'no-cache' } });
       const j = await r.json();
       if (j.id !== healthId) throw new Error('reached a different server');
       if (publicFails) log('[tunnel] public check OK again');
       publicFails = 0;
     } catch (e) {
+      if (stopped || p !== proc) return; // stopped or restarted meanwhile
       publicFails++;
-      log(`[tunnel] public check failed (${publicFails}/3): ${e.message}`);
-      if (publicFails >= 3) { publicFails = 0; restart('https://' + hostname + ' unreachable'); }
+      log(`[tunnel] public check failed (${publicFails}/${limit}): ${e.message}`);
+      if (publicFails >= limit) { publicFails = 0; restart('https://' + hostname + ' unreachable'); }
     }
   };
 
