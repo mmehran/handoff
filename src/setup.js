@@ -23,24 +23,21 @@ const PRESET_HELP = {
 };
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-let ended = false;
-rl.on('close', () => { ended = true; });
+// Lines typed (or pasted, or piped) before their question is asked wait here instead of being lost.
+const typed = [];
+let ended = false, waiting = null;
+rl.on('line', line => { if (waiting) { const w = waiting; waiting = null; w(line); } else typed.push(line); });
+rl.on('close', () => { ended = true; if (waiting) { const w = waiting; waiting = null; w(null); } });
+const nextLine = () => (typed.length ? Promise.resolve(typed.shift()) : ended ? Promise.resolve(null) : new Promise(r => { waiting = r; }));
 // the typed line, or null once input has ended
-const ask = q => new Promise(r => {
-  if (ended) return r(null);
-  const onClose = () => r(null);
-  rl.once('close', onClose);
-  rl.question(q, a => { rl.off('close', onClose); r(a.trim()); });
-});
+const ask = async q => { process.stdout.write(q); const a = await nextLine(); return a === null ? null : a.trim(); };
 // like ask(), but doesn't echo what is typed
-const askHidden = q => new Promise(r => {
-  if (ended) return r(null);
+const askHidden = async q => {
+  process.stdout.write(q);
   const write = rl._writeToOutput;
-  const onClose = () => { rl._writeToOutput = write; r(null); };
-  rl.once('close', onClose);
-  rl._writeToOutput = s => { if (s.startsWith(q)) write.call(rl, q); else if (/\r?\n/.test(s)) write.call(rl, '\n'); };
-  rl.question(q, a => { rl.off('close', onClose); rl._writeToOutput = write; r(a.trim()); });
-});
+  rl._writeToOutput = s => { if (/\r?\n/.test(s)) write.call(rl, '\n'); };
+  try { const a = await nextLine(); return a === null ? null : a.trim(); } finally { rl._writeToOutput = write; }
+};
 const yesNo = async (q, def) => {
   for (;;) {
     const a = await ask(`${q} [${def ? 'Y/n' : 'y/N'}]: `);
