@@ -68,6 +68,9 @@ export function normalize(o) {
       else if (b.type === 'tool_use' && b.name === 'AskUserQuestion') {
         // Claude is asking the user to choose — render it as a question card, not a tool call
         out.push({ ...base, kind: 'question', id: b.id, questions: parseQuestions(b.input) });
+      } else if (b.type === 'tool_use' && b.name === 'ExitPlanMode') {
+        // Claude's plan, waiting for approval: shown as a plan card with the plan itself
+        out.push({ ...base, kind: 'plan', id: b.id, text: clip(String(b.input?.plan || ''), TEXT_MAX) });
       } else if (b.type === 'tool_use') {
         let input = '';
         try { input = JSON.stringify(b.input, null, 1); } catch { /* ignore */ }

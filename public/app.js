@@ -515,7 +515,27 @@ function showWhatsApp(s) {
   b.hidden = false;
 }
 
+// Approve Claude's plan (ExitPlanMode), approve it and let Claude make edits without asking, or send
+// it back with what to change.
+function planActions(p, done) {
+  const note = h('input', { type: 'text', placeholder: 'What should change? (optional)', 'aria-label': 'What should change in the plan' });
+  const decide = async (allow, alwaysMode) => {
+    const text = note.value.trim();
+    try {
+      await api('POST', `/api/permissions/${p.id}`, { allow, alwaysMode, message: allow ? undefined : text ? `The user wants changes to the plan: ${text}` : 'The user wants you to keep planning and change the plan.' });
+      toast(allow ? 'Plan approved' : 'Sent back to Claude');
+    } catch (x) { toast(x.message); }
+    state.perms.delete(p.id); renderPerms(); done?.();
+  };
+  return h('div', { class: 'plan-actions' },
+    h('div', { class: 'row' },
+      h('button', { class: 'btn ok', onclick: () => decide(true) }, 'Approve plan'),
+      h('button', { class: 'btn', onclick: () => decide(true, 'acceptEdits') }, 'Approve, accept all edits')),
+    h('div', { class: 'row' }, h('div', { class: 'grow' }, note), h('button', { class: 'btn', onclick: () => decide(false) }, 'Keep planning')));
+}
+
 function renderPerms() {
+  window.dispatchEvent(new Event('handoff-perms')); // an open chat updates its plan card
   const ps = $('#perm-sheet');
   const items = [...state.perms.values()];
   const ids = items.map(p => p.id).join(',');
@@ -528,6 +548,14 @@ function renderPerms() {
       try { await api('POST', `/api/permissions/${p.id}`, { allow, alwaysMode }); state.perms.delete(p.id); renderPerms(); }
       catch (x) { toast(x.message); state.perms.delete(p.id); renderPerms(); }
     };
+    if (p.tool === 'ExitPlanMode') {
+      return h('div', { class: 'perm' },
+        h('div', { class: 'row' }, h('b', {}, '📋 Claude has a plan'), h('span', { class: 'grow' }),
+          h('a', { href: `#/s/${p.sessionId}`, class: 'small muted' }, 'open session')),
+        h('div', { class: 'small muted mono' }, p.cwd),
+        h('div', { class: 'msg assistant plan-text' }, md(p.plan || '')),
+        planActions(p));
+    }
     return h('div', { class: 'perm' },
       h('div', { class: 'row' }, h('b', {}, `Allow ${p.tool}?`), h('span', { class: 'grow' }),
         h('a', { href: `#/s/${p.sessionId}`, class: 'small muted' }, 'open session')),
@@ -1095,10 +1123,35 @@ async function sessionView(id, params = new URLSearchParams()) {
     muteBtn.setAttribute('aria-label', muteBtn.title); muteBtn.setAttribute('aria-pressed', String(chatMuted));
   };
   if (muteBtn) { muteLabel(); api('GET', '/api/notify/prefs').then(pr => { chatMuted = pr.mutedSessions.includes(id); muteLabel(); }).catch(() => {}); }
+  // Claude's to-do list for this chat: one line with progress and what it is doing now, which opens
+  // into the whole checklist. Pinned with the header, so it stays in view.
+  const todoBox = h('details', { class: 'todos', hidden: true });
+  todoBox.open = store.get('todosOpen', false);
+  todoBox.addEventListener('toggle', () => store.set('todosOpen', todoBox.open));
+  let activity = { todos: [] };
+  const renderTodos = list => {
+    todoBox.hidden = !list.length;
+    if (!list.length) return todoBox.replaceChildren();
+    const done = list.filter(x => x.status === 'completed').length, now = list.find(x => x.status === 'in_progress');
+    const bar = h('span', { class: 'todo-bar' }, h('span', {}));
+    bar.firstChild.style.width = Math.round(done / list.length * 100) + '%';
+    const mark = { completed: '✓', in_progress: '◐', pending: '○' };
+    todoBox.replaceChildren(
+      h('summary', {}, h('span', { class: 'todo-count' }, done === list.length ? `✓ All ${list.length} done` : `${done} of ${list.length} done`),
+        h('span', { class: 'todo-now' }, now ? (now.activeForm || now.subject) : done === list.length ? '' : 'To-do list'), bar),
+      h('ol', { class: 'todo-list' }, ...list.map(x => h('li', { class: x.status }, h('span', { class: 'todo-mark', 'aria-hidden': 'true' }, mark[x.status] || '○'), h('span', {}, x.subject)))));
+  };
+  // to-do list, plan and the rest of the overview come from the whole transcript on the server
+  let actTimer = null;
+  const loadActivity = async () => {
+    try { activity = await api('GET', `/api/sessions/${id}/activity`); renderTodos(activity.todos); window.dispatchEvent(new Event('handoff-activity')); } catch { /* next change tries again */ }
+  };
+  const activitySoon = () => { clearTimeout(actTimer); actTimer = setTimeout(loadActivity, 700); };
+  state.cleanup.push(() => clearTimeout(actTimer));
   // pinned under the top bar, so status, actions and tabs stay in reach however far the chat scrolls
   const head = h('div', { class: 'session-head' },
     h('div', { class: 'session-bar' }, status, h('div', { class: 'cwd mono', title: info.cwd || '' }, h('span', { dir: 'ltr' }, info.cwd || '')), findBtn, muteBtn, intBtn, stopBtn),
-    settings);
+    settings, todoBox);
   const msgs = h('div', { id: 'msgs' });
   const working = h('div', { class: 'working', hidden: true }, h('span', { class: 'spinner' }), h('span', { class: 'wtext' }, 'Claude is working…'));
   const older = h('button', { class: 'btn', hidden: true }, 'Load older messages');
@@ -1129,7 +1182,44 @@ async function sessionView(id, params = new URLSearchParams()) {
   forkBox.addEventListener('change', updateNotice);
 
   // transcript rendering (de-duplicated: events can arrive from the stream, the poller and the initial load)
-  const tools = new Map(), questions = new Map(), seen = new Set(), pending = [];
+  const tools = new Map(), questions = new Map(), plans = new Map(), quiet = new Set(), seen = new Set(), pending = [];
+  // to-do bookkeeping shows in the header strip, so in the chat it is one quiet line, not a tool box
+  const QUIET_TOOLS = new Set(['TaskCreate', 'TaskUpdate', 'TodoWrite', 'TaskList', 'TaskGet']);
+  const todoLine = e => {
+    let i = {};
+    try { i = JSON.parse(e.input || '{}'); } catch { /* cut short */ }
+    const name = id => activity.todos.find(x => x.id === String(id))?.subject || `to-do ${id}`;
+    if (e.name === 'TaskCreate') return `☐ Added to the to-do list: ${i.subject || i.content || 'a step'}`;
+    if (e.name === 'TaskUpdate') return i.status === 'completed' ? `☑ Done: ${name(i.taskId)}` : i.status === 'in_progress' ? `▸ Working on: ${name(i.taskId)}` : i.status === 'deleted' ? `✕ Dropped: ${name(i.taskId)}` : `✎ Updated: ${name(i.taskId)}`;
+    if (e.name === 'TodoWrite') { const l = Array.isArray(i.todos) ? i.todos : []; return `☑ To-do list: ${l.filter(x => x.status === 'completed').length} of ${l.length} done`; }
+    return '☐ Checked the to-do list';
+  };
+  // Claude's plan: shown in full, with approve / send back while it waits (for runs started here)
+  const planCard = e => {
+    const status = h('span', { class: 'chip' }, 'waiting');
+    const actions = h('div', {});
+    const card = h('div', { class: 'plancard' }, h('div', { class: 'plan-head' }, h('b', {}, '📋 Plan'), h('span', { class: 'grow' }), status),
+      h('div', { class: 'msg assistant plan-text' }, md(e.text || '(empty plan)')), actions);
+    card.settle = (approved, text) => {
+      card.classList.add(approved ? 'approved' : 'rejected');
+      status.className = 'chip ' + (approved ? 'idle' : 'error');
+      status.textContent = approved ? 'approved' : 'sent back';
+      actions.replaceChildren(...(!approved && text ? [h('div', { class: 'q-status' }, text.replace(/^.*?(the user said:?|changes to the plan:)\s*/is, '').slice(0, 400))] : []));
+    };
+    card.refresh = () => {
+      if (card.classList.contains('approved') || card.classList.contains('rejected')) return;
+      const p = [...state.perms.values()].find(x => x.sessionId === id && x.tool === 'ExitPlanMode');
+      if ((p?.id || '') === card.permId) return; // unchanged: keep what is being typed
+      card.permId = p?.id || '';
+      if (p) actions.replaceChildren(planActions(p));
+      else actions.replaceChildren(h('div', { class: 'q-status' }, info.live && !info.run ? 'Waiting for approval on the laptop.' : 'Waiting for approval.'));
+    };
+    card.refresh();
+    return card;
+  };
+  const onPerms = () => { for (const c of plans.values()) c.refresh(); };
+  window.addEventListener('handoff-perms', onPerms);
+  state.cleanup.push(() => window.removeEventListener('handoff-perms', onPerms));
   const keyOf = e => e.uuid ? `${e.uuid}:${e.kind}:${e.id || e.toolUseId || ''}:${(e.text || '').length}` : null;
   const nearBottom = () => innerHeight + scrollY >= document.body.scrollHeight - 160;
   // tool rows name files inside the project by their path from the project folder
@@ -1146,6 +1236,12 @@ async function sessionView(id, params = new URLSearchParams()) {
     }
     if (e.kind === 'assistant') return h('div', { class: 'msg assistant' + (e.error ? ' error' : '') }, md(e.text));
     if (e.kind === 'system') return h('div', { class: 'msg system', text: e.text });
+    if (e.kind === 'plan') {
+      const card = planCard(e);
+      plans.set(e.id, card);
+      return card;
+    }
+    if (e.kind === 'tool_use' && QUIET_TOOLS.has(e.name)) { quiet.add(e.id); return h('div', { class: 'msg system todo-line' }, todoLine(e)); }
     if (e.kind === 'question') {
       const card = questionCard(id, e, () => info.question = null);
       questions.set(e.id, card);
@@ -1159,6 +1255,9 @@ async function sessionView(id, params = new URLSearchParams()) {
     if (e.kind === 'tool_result') {
       const q = questions.get(e.toolUseId);
       if (q) { answerQuestionCard(q, e.text); return null; } // the question was answered
+      if (quiet.has(e.toolUseId)) return null;
+      const plan = plans.get(e.toolUseId);
+      if (plan) { plan.settle(!e.isError && /approved/i.test(e.text), e.text); return null; }
       const d = tools.get(e.toolUseId);
       const pre = [h('div', { class: 'label' }, e.isError ? 'error' : 'result'), h('pre', { text: e.text || '(empty)' })];
       if (d) { d.append(...pre); if (e.isError) d.classList.add('err'); return null; }
@@ -1169,6 +1268,7 @@ async function sessionView(id, params = new URLSearchParams()) {
   const appendEvents = (events, atTop = false) => {
     const stick = !atTop && nearBottom();
     const nodes = [];
+    if (!atTop && events.some(e => e.kind === 'tool_use' || e.kind === 'tool_result' || e.kind === 'plan')) activitySoon();
     for (const e of events) {
       const k = keyOf(e);
       if (k) { if (seen.has(k)) continue; seen.add(k); }
@@ -1271,7 +1371,7 @@ async function sessionView(id, params = new URLSearchParams()) {
   state.cleanup.push(() => clearInterval(infoTimer));
 
   // initial history (newest part), then live updates
-  const t = await api('GET', `/api/sessions/${id}/transcript`);
+  const [t] = await Promise.all([api('GET', `/api/sessions/${id}/transcript`), loadActivity()]);
   if (stale()) return;
   appendEvents(t.events);
   let start = t.start, end = t.end;

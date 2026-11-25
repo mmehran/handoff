@@ -213,6 +213,7 @@ export class Runner extends EventEmitter {
     let input = '';
     try { input = JSON.stringify(req.input, null, 1); } catch { /* ignore */ }
     const pub = { id, sessionId: run.sessionId, cwd: run.cwd, tool: req.tool_name, input: input.slice(0, 6000), createdAt: Date.now() };
+    if (req.tool_name === 'ExitPlanMode') pub.plan = String(req.input?.plan || '').slice(0, 20000); // approving a plan: show the plan, not its JSON
     const timer = setTimeout(() => this.decide(id, { allow: false, message: 'Timed out waiting for remote approval' }), this.cfg.permissionTimeoutMinutes * 60e3);
     timer.unref?.();
     this.permissions.set(id, { run, requestId, rawInput: req.input, public: pub, timer });

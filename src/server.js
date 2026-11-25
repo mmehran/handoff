@@ -15,6 +15,7 @@ import { SearchIndex } from './search.js';
 import { changes, diff } from './changes.js';
 import { parseImages, saveForLiveSession } from './attachments.js';
 import { PushService } from './push.js';
+import { Activity } from './activity.js';
 
 const PUBLIC = path.join(ROOT, 'public');
 const COOKIE = 'handoff_sid';
@@ -209,6 +210,13 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
     const t = await store.readTranscript(m[1], before == null ? null : Number(before));
     if (!t) return json(res, 200, { events: [], start: 0, end: 0, size: 0 });
     json(res, 200, t);
+  });
+
+  // what the session has been doing: its to-do list, latest plan, changed files, commands, sub-agents
+  const activity = new Activity(store);
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/activity$/, async (req, res, ctx, m) => {
+    const a = await activity.of(m[1]);
+    json(res, 200, a || { todos: [], plan: null, files: [], commands: [], commandCount: 0, agents: [], tools: 0, prompts: 0, first: 0, last: 0 });
   });
 
   // live tail of one session transcript (Server-Sent Events)

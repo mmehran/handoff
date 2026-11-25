@@ -221,6 +221,34 @@ body.two-pane .session-head { margin: -18px -28px 14px; padding: 12px 28px 0; }
 .tab.on { color: var(--text); }
 .tab.on::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 2.5px; border-radius: 3px; background: var(--accent); }
 
+/* to-do list in the pinned header */
+.todos { margin: -2px 0 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); font-size: 13.5px; }
+.todos summary { display: flex; align-items: center; gap: 10px; padding: 7px 12px; cursor: pointer; list-style: none; position: relative; min-width: 0; }
+.todos summary::-webkit-details-marker { display: none; }
+.todos summary::after { content: "▾"; color: var(--muted); transition: transform .15s; }
+.todos[open] summary::after { transform: rotate(180deg); }
+.todo-count { flex: none; font-weight: 650; }
+.todo-now { flex: 1; min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.todo-bar { position: absolute; left: 12px; right: 12px; bottom: 0; height: 2px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+.todo-bar > span { display: block; height: 100%; background: var(--ok); transition: width .4s var(--ease); }
+.todo-list { list-style: none; margin: 0; padding: 6px 12px 10px; max-height: 38vh; overflow: auto; border-top: 1px solid var(--border); }
+.todo-list li { display: flex; gap: 9px; padding: 4px 0; line-height: 1.4; }
+.todo-mark { flex: none; width: 1.1em; text-align: center; color: var(--faint); }
+.todo-list li.completed { color: var(--muted); } .todo-list li.completed > span:last-child { text-decoration: line-through; text-decoration-color: var(--faint); }
+.todo-list li.completed .todo-mark { color: var(--ok); }
+.todo-list li.in_progress { font-weight: 620; } .todo-list li.in_progress .todo-mark { color: var(--accent); }
+.msg.system.todo-line { text-align: left; font-size: 12.5px; padding: 0 4px; }
+/* Claude's plan */
+.plancard { border: 1.5px solid var(--accent); border-radius: var(--radius-l); background: var(--surface); padding: 12px 14px; box-shadow: var(--shadow-1); }
+.plancard.approved { border-color: color-mix(in srgb, var(--ok) 60%, transparent); }
+.plancard.rejected { border-color: var(--border); }
+.plan-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.plan-text { max-height: 60vh; overflow: auto; }
+.perm .plan-text { max-height: 40vh; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; margin: 8px 0; }
+.plan-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.plan-actions input { min-width: 0; }
+.chip.error { color: var(--err); border-color: color-mix(in srgb, var(--err) 45%, transparent); }
+
 /* ---------- chat ---------- */
 #msgs { display: flex; flex-direction: column; gap: 14px; padding-bottom: 10px; }
 .msg { max-width: 100%; overflow-wrap: anywhere; line-height: 1.6; }
