@@ -1,8 +1,18 @@
 # Handoff
 
+[![CI](https://github.com/mmehran/handoff/actions/workflows/ci.yml/badge.svg)](https://github.com/mmehran/handoff/actions/workflows/ci.yml)
+
 **Self-hosted remote control for Claude Code.** Handoff runs on the computer where you use Claude Code and lets you reach it from your phone or any other browser. You can browse every project and session, watch Claude work live, send prompts, answer its questions, and approve tools. Optionally, it also sends you WhatsApp messages when a session needs you.
 
 It's a small Node.js server with no npm dependencies. It listens on `127.0.0.1` only and reaches the internet through a Cloudflare tunnel.
+
+<p align="center">
+  <img src="docs/images/home.png" width="180" alt="Home: sessions running now, and every project">
+  <img src="docs/images/question.png" width="180" alt="A question from Claude, answered with a tap">
+  <img src="docs/images/files.png" width="180" alt="Files tab: the project's code, coloured">
+  <img src="docs/images/changes.png" width="180" alt="Changes tab: what Claude changed, as a diff">
+  <img src="docs/images/search.png" width="180" alt="Search across every chat">
+</p>
 
 > Handoff is an independent open-source project. It is not affiliated with or endorsed by Anthropic. "Claude" and "Claude Code" are trademarks of Anthropic.
 
