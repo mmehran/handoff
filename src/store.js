@@ -58,7 +58,7 @@ export function normalize(o) {
           else if (Array.isArray(b.content)) t = b.content.map(x => (x.type === 'text' ? x.text : `[${x.type}]`)).join('\n');
           out.push({ ...base, kind: 'tool_result', toolUseId: b.tool_use_id, isError: !!b.is_error, text: clip(stripReminders(t), TOOL_RESULT_MAX) });
         } else if (b.type === 'image') {
-          out.push({ ...base, kind: 'user', text: '[image]' });
+          out.push({ ...base, kind: 'user', text: '📷 Photo' });
         }
       }
     }

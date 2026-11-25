@@ -13,6 +13,7 @@ import { FileBrowser } from './files.js';
 import { rotate } from './logfile.js';
 import { SearchIndex } from './search.js';
 import { changes, diff } from './changes.js';
+import { parseImages, saveForLiveSession } from './attachments.js';
 
 const PUBLIC = path.join(ROOT, 'public');
 const COOKIE = 'handoff_sid';
@@ -320,14 +321,17 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
 
   // ---------- control ----------
   route('POST', /^\/api\/sessions\/new$/, async (req, res, ctx) => {
-    const b = await readJson(req);
-    const r = await runner.send({ cwd: String(b.cwd || ''), text: b.text, mode: b.mode, model: b.model || undefined, effort: b.effort || undefined });
-    audit(ctx.ip, 'session_new', { cwd: b.cwd, sessionId: r.sessionId, mode: b.mode, model: b.model, effort: b.effort, text: String(b.text).slice(0, 200) });
+    const b = await readJson(req, BODY_WITH_PHOTOS);
+    const images = parseImages(b.images);
+    const r = await runner.send({ cwd: String(b.cwd || ''), text: String(b.text ?? ''), images, mode: b.mode, model: b.model || undefined, effort: b.effort || undefined });
+    audit(ctx.ip, 'session_new', { cwd: b.cwd, sessionId: r.sessionId, mode: b.mode, model: b.model, effort: b.effort, photos: images.length || undefined, text: String(b.text ?? '').slice(0, 200) });
     json(res, 200, r);
   });
 
   route('POST', /^\/api\/sessions\/([0-9a-f-]{36})\/message$/, async (req, res, ctx, m) => {
-    const b = await readJson(req);
+    const b = await readJson(req, BODY_WITH_PHOTOS);
+    const images = parseImages(b.images);
+    if (typeof b.text !== 'string') b.text = '';
     const info = await store.sessionInfo(m[1]);
     const run = runner.bySession(m[1]);
     if (!info && !run) return json(res, 404, { error: 'session not found' });
@@ -336,14 +340,16 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
     // local inbox, so the prompt shows up on the laptop in real time (and no second writer is started).
     const live = !run && !fork ? info?.live : null;
     if (live) {
-      if (typeof b.text !== 'string' || !b.text.trim()) throw httpErr(400, 'empty message');
+      if (!b.text.trim() && !images.length) throw httpErr(400, 'empty message');
       if (b.text.length > 100_000) throw httpErr(413, 'message too long');
-      await injectMessage(cfg.claudeHome, live, b.text);
-      audit(ctx.ip, 'message_live', { sessionId: m[1], pid: live.pid, text: String(b.text).slice(0, 200) });
+      // the laptop's inbox takes text: photos are saved in the project folder and named in the message
+      const note = images.length ? await saveForLiveSession(info.cwd, images) : '';
+      await injectMessage(cfg.claudeHome, live, (b.text.trim() || 'Please look at this.') + note);
+      audit(ctx.ip, 'message_live', { sessionId: m[1], pid: live.pid, photos: images.length || undefined, text: String(b.text).slice(0, 200) });
       return json(res, 200, { sessionId: m[1], delivered: 'live' });
     }
-    const r = await runner.send({ sessionId: m[1], cwd: run?.cwd || info.cwd, text: b.text, mode: b.mode, model: b.model || undefined, effort: b.effort || undefined, fork });
-    audit(ctx.ip, 'message', { sessionId: m[1], target: r.sessionId, fork, mode: b.mode, model: b.model, effort: b.effort, text: String(b.text).slice(0, 200) });
+    const r = await runner.send({ sessionId: m[1], cwd: run?.cwd || info.cwd, text: b.text, images, mode: b.mode, model: b.model || undefined, effort: b.effort || undefined, fork });
+    audit(ctx.ip, 'message', { sessionId: m[1], target: r.sessionId, fork, mode: b.mode, model: b.model, effort: b.effort, photos: images.length || undefined, text: String(b.text).slice(0, 200) });
     json(res, 200, { ...r, delivered: fork ? 'fork' : 'resume' });
   });
 
@@ -413,6 +419,7 @@ function sse(res) {
   res.write(`:${' '.repeat(2048)}\nretry: 3000\n\n`);
 }
 
+const BODY_WITH_PHOTOS = 4 * 7 * 1024 * 1024; // up to 4 photos of 5 MB, base64-encoded
 async function readJson(req, limit = 256 * 1024) {
   const ct = String(req.headers['content-type'] || '');
   if (!ct.startsWith('application/json')) throw httpErr(415, 'expected application/json');

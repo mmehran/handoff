@@ -379,3 +379,33 @@ test('search: across all chats, inside one chat, and a hit shown in context', as
   assert.ok(ctx.json.events.some(e => e.hit && /hello from desktop/.test(e.text)));
   assert.equal((await fetch(`${base}/api/search?q=x`)).status, 401, 'needs a login');
 });
+
+test('photos: saved into the project for a session on the laptop, sent as image blocks to sessions Handoff runs', async () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7, 7]).toString('base64');
+  // laptop session: through the inbox, as text naming the saved file (stop the process an earlier test left running first)
+  await req('POST', `/api/sessions/${desktopId}/stop`);
+  await new Promise(r => setTimeout(r, 300));
+  fs.writeFileSync(path.join(home, 'sessions', `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: desktopId, cwd: work, status: 'idle', entrypoint: 'claude-desktop', name: 'Desktop task', messagingSocketPath: inboxPath }));
+  inboxLines.length = 0;
+  const live = await req('POST', `/api/sessions/${desktopId}/message`, { text: 'what is wrong here?', images: [{ media_type: 'image/png', data: png }] });
+  assert.equal(live.status, 200, JSON.stringify(live.json));
+  assert.equal(live.json.delivered, 'live');
+  await new Promise(r => setTimeout(r, 200));
+  const sent = inboxLines.find(l => l.type === 'user')?.message.content;
+  assert.match(sent, /^what is wrong here\?\n\n\(I attached a photo from my phone: \.handoff-uploads\/[\w.-]+\.png/);
+  const saved = sent.match(/\.handoff-uploads\/[\w.-]+\.png/)[0];
+  assert.ok(fs.existsSync(path.join(work, saved)));
+  fs.rmSync(path.join(home, 'sessions', `${process.pid}.json`));
+
+  // a new session Handoff starts: image blocks in the prompt itself
+  const perm = sseWait('/api/events', ev => ev === 'permission');
+  const r = await req('POST', '/api/sessions/new', { cwd: work, text: 'describe it', images: [{ media_type: 'image/png', data: png }] });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  const p = await perm;
+  await req('POST', `/api/permissions/${p.id}`, { allow: true });
+  await new Promise(res => setTimeout(res, 300));
+  const t = await req('GET', `/api/sessions/${r.json.sessionId}/transcript`);
+  assert.deepEqual(t.json.events.filter(e => e.kind === 'user').map(e => e.text), ['describe it', '📷 Photo']);
+  await req('POST', `/api/sessions/${r.json.sessionId}/stop`);
+  assert.equal((await req('POST', '/api/sessions/new', { cwd: work, text: 'x', images: [{ media_type: 'image/png', data: 'AAAA' }] })).status, 415);
+});

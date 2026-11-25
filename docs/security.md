@@ -47,6 +47,10 @@ Off by default. With `HANDOFF_FILE_BROWSER=true`, every session gets a read-only
 - Every file opened, downloaded or diffed is recorded in the audit log (`file_view`, `file_download`, `diff_view`).
 - `HANDOFF_ALLOWED_ROOTS` limits the Files tab too.
 
+## Photos
+
+Photos sent with a prompt are checked (JPEG, PNG, GIF or WebP, the bytes must match, at most 4 of 5 MB each). Sessions Handoff runs get them as image blocks in the prompt, and they aren't stored anywhere else. For a session open on the computer they're saved in its project folder under `.handoff-uploads/`, which has its own `.gitignore` so git ignores it, and are deleted after a week.
+
 ## Search index
 
 With `HANDOFF_SEARCH=true` (the default), Handoff keeps a copy of what your prompts and Claude's replies said in `data/search/`, so it can search them quickly. Tool output isn't copied. It's the same text that's already in `~/.claude`, git-ignored with the rest of `data/`, and never shown in the Files tab. Delete the folder at any time; it's rebuilt in the background.

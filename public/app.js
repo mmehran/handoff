@@ -333,6 +333,49 @@ async function showInContext(sessionId, offset, terms) {
   } catch (x) { box.replaceChildren(h('div', { class: 'empty' }, x.message)); }
 }
 
+// ---------- photos for a prompt ----------
+// Picked from the camera or the gallery and scaled down on the phone before upload (1568 px on the
+// long side, Claude's recommended size), so even big camera photos send quickly. At most 4.
+async function shrinkPhoto(file) {
+  const bmp = await createImageBitmap(file);
+  const k = Math.min(1, 1568 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  bmp.close?.();
+  const url = c.toDataURL('image/jpeg', 0.85);
+  return { media_type: 'image/jpeg', data: url.slice(url.indexOf(',') + 1), preview: url };
+}
+function photoPicker() {
+  const photos = [];
+  const input = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
+  const strip = h('div', { class: 'photos', hidden: true });
+  const button = h('button', { class: 'btn photo-btn', type: 'button', title: 'Attach photos', 'aria-label': 'Attach photos', onclick: () => input.click() }, '📷');
+  const render = () => {
+    strip.hidden = !photos.length;
+    strip.replaceChildren(...photos.map((p, i) => h('div', { class: 'photo' }, h('img', { src: p.preview, alt: 'Photo to send' }),
+      h('button', { class: 'icon', type: 'button', 'aria-label': 'Remove this photo', onclick: () => { photos.splice(i, 1); render(); } }, '×'))));
+    button.textContent = photos.length ? `📷 ${photos.length}` : '📷';
+  };
+  input.addEventListener('change', async () => {
+    for (const f of [...input.files]) {
+      if (photos.length >= 4) { toast('At most 4 photos per message'); break; }
+      try { photos.push(await shrinkPhoto(f)); } catch { toast(`Couldn't read ${f.name} as a photo`); }
+    }
+    input.value = '';
+    render();
+  });
+  return {
+    button, input, strip,
+    count: () => photos.length,
+    take: () => photos.map(({ media_type, data }) => ({ media_type, data })),
+    previews: () => photos.map(p => p.preview),
+    snapshot: () => photos.slice(),
+    restore: list => { photos.splice(0, photos.length, ...list); render(); },
+    clear: () => { photos.length = 0; render(); }
+  };
+}
+
 // ---------- views ----------
 async function homeView() {
   setTop('Handoff');
@@ -751,7 +794,8 @@ async function sessionView(id, params = new URLSearchParams()) {
   const nearBottom = () => innerHeight + scrollY >= document.body.scrollHeight - 160;
   const render = (e) => {
     if (e.kind === 'user') {
-      const i = pending.findIndex(p => p.text === e.text.trim());
+      const t = e.text.trim();
+      const i = pending.findIndex(p => p.text === t || (p.photos && (t === '📷 Photo' || t.startsWith(p.text))));
       if (i >= 0) { pending[i].el.remove(); pending.splice(i, 1); }
       return h('div', { class: 'msg user' }, e.text, e.remote ? h('div', { class: 'via' }, 'sent from Handoff') : null);
     }
@@ -791,17 +835,19 @@ async function sessionView(id, params = new URLSearchParams()) {
     if (stick && !chat.hidden) scrollTo(0, document.body.scrollHeight);
   };
 
+  const photos = photoPicker();
   const doSend = async () => {
     const text = ta.value.trim();
-    if (!text) return;
+    if (!text && !photos.count()) return;
     send.disabled = true;
     // show it right away; replaced by the real entry when the session records it
-    const el = h('div', { class: 'msg user pending' }, text, h('div', { class: 'via' }, 'sending…'));
-    const p = { text, el };
+    const images = photos.take(), kept = photos.snapshot();
+    const el = h('div', { class: 'msg user pending' }, text, images.length ? h('div', { class: 'thumbs' }, ...photos.previews().map(src => h('img', { src, alt: 'Photo' }))) : null, h('div', { class: 'via' }, 'sending…'));
+    const p = { text, el, photos: images.length > 0 };
     pending.push(p); msgs.append(el); scrollTo(0, document.body.scrollHeight);
-    ta.value = ''; ta.style.height = '';
+    ta.value = ''; ta.style.height = ''; photos.clear();
     try {
-      const body = { text, fork: forkBox.checked, ...(isLive() ? {} : picks.values()) };
+      const body = { text, images, fork: forkBox.checked, ...(isLive() ? {} : picks.values()) };
       const r = await api('POST', `/api/sessions/${id}/message`, body);
       el.lastChild.textContent = r.delivered === 'live' ? 'delivered to your laptop' : 'sent';
       if (r.sessionId && r.sessionId !== id) { toast('Forked into a new session'); location.hash = `#/s/${r.sessionId}`; return; }
@@ -809,14 +855,14 @@ async function sessionView(id, params = new URLSearchParams()) {
     } catch (x) {
       el.classList.add('failed'); el.lastChild.textContent = 'not sent: ' + x.message;
       pending.splice(pending.indexOf(p), 1);
-      ta.value = text;
+      ta.value = text; photos.restore(kept);
     }
     send.disabled = false;
   };
   send.addEventListener('click', doSend);
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doSend(); } });
   ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, innerHeight * 0.4) + 'px'; });
-  const composer = h('div', { class: 'composer' }, notice, ta, h('div', { class: 'row opts' }, ...picks.els, forkLabel, h('span', { class: 'grow spacer' }), send));
+  const composer = h('div', { class: 'composer' }, notice, photos.strip, ta, photos.input, h('div', { class: 'row opts' }, ...picks.els, forkLabel, h('span', { class: 'grow spacer' }), photos.button, send));
   const chat = h('div', { class: 'chat' }, findPanel, older, msgs, working, composer);
 
   // Chat / Files / Changes tabs; Files and Changes only when the server has the file browser turned on
@@ -920,17 +966,18 @@ async function newView(params) {
   const cwd = h('input', { type: 'text', list: 'cwds', placeholder: 'Working directory, e.g. D:\\projects\\my-app', value: params.get('cwd') || '' });
   const ta = h('textarea', { rows: '5', placeholder: 'What should Claude do?' });
   const picks = makePickers();
+  const photos = photoPicker();
   const err = h('div', { class: 'err' });
   const go = h('button', { class: 'btn primary', onclick: async () => {
     go.disabled = true; err.textContent = 'Starting Claude…';
     try {
-      const r = await api('POST', '/api/sessions/new', { cwd: cwd.value.trim(), text: ta.value, ...picks.values() });
+      const r = await api('POST', '/api/sessions/new', { cwd: cwd.value.trim(), text: ta.value, images: photos.take(), ...picks.values() });
       location.hash = `#/s/${r.sessionId}`;
     } catch (x) { err.textContent = x.message; go.disabled = false; }
   } }, 'Start session');
   view.replaceChildren(h('div', { class: 'list' },
     h('div', { class: 'label' }, 'Project folder'), cwd, dl,
-    h('div', { class: 'label' }, 'Prompt'), ta,
+    h('div', { class: 'label' }, 'Prompt'), ta, photos.strip, photos.input, h('div', { class: 'row' }, photos.button, h('span', { class: 'small muted' }, 'Attach photos (optional)')),
     h('div', { class: 'label' }, 'Model · effort · mode'),
     h('div', { class: 'row opts' }, ...picks.els),
     h('div', { class: 'row' }, h('span', { class: 'grow' }), go), err));

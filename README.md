@@ -15,6 +15,7 @@ It's a small Node.js server with no npm dependencies. It listens on `127.0.0.1` 
   - continue an old session in place, or fork it
   - start a new session in any folder
 - **Same choices as Claude Desktop.** The model list comes from your installed Claude Code, with each model's effort levels and the permission modes (Ask, Accept edits, Plan, Auto; Bypass only if you allow it).
+- **Attach photos.** Snap a screenshot or photo on your phone and send it with your prompt (up to 4, scaled down on the phone first).
 - **Approve tools from your phone.** Requests like "Allow Bash: npm test?" pop up with Allow and Deny buttons.
 - **Answer Claude's questions.** When Claude asks a multiple-choice question, you see the options and tap one.
 - **Browse the project's files (optional).** A Files tab in every session shows its folder: find files by name, read code with colouring, preview Markdown, view images and download any file.

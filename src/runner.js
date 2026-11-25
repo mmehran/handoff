@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { imageContent } from './attachments.js';
 
 // same choices as Claude Desktop's mode menu ('manual' = Ask permissions; older configs say 'default')
 export const PERMISSION_MODES = ['manual', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'];
@@ -102,9 +103,11 @@ export class Runner extends EventEmitter {
   }
 
   // Send a message to a session: reuse our live process, or spawn one (new / resume in place / fork).
-  async send({ sessionId, cwd, text, mode, model, effort, fork }) {
-    if (typeof text !== 'string' || !text.trim()) throw httpErr(400, 'empty message');
+  // images: checked photos ({ media_type, data }) sent along as image blocks
+  async send({ sessionId, cwd, text, mode, model, effort, fork, images = [] }) {
+    if (typeof text !== 'string' || (!text.trim() && !images.length)) throw httpErr(400, 'empty message');
     if (text.length > 100_000) throw httpErr(413, 'message too long');
+    const content = images.length ? imageContent(text.trim(), images) : text;
     mode = this.normalizeMode(mode || this.cfg.defaultPermissionMode);
     if (model === 'default') model = undefined;
     this.validate({ mode, model, effort });
@@ -119,7 +122,7 @@ export class Runner extends EventEmitter {
     if (existing) {
       if (existing.mode !== mode) { this.control(existing, { subtype: 'set_permission_mode', mode }); existing.mode = mode; }
       if (model && existing.model !== model) { this.control(existing, { subtype: 'set_model', model }); existing.model = model; }
-      this.writeUser(existing, text);
+      this.writeUser(existing, content);
       return { sessionId: existing.sessionId, runId: existing.runId };
     }
     const active = [...this.runs.values()].filter(r => r.status !== 'exited').length;
@@ -128,7 +131,7 @@ export class Runner extends EventEmitter {
     if (this.cfg.allowedRoots.length && !this.cfg.allowedRoots.some(root => isWithin(cwd, root))) throw httpErr(403, 'directory is outside allowedRoots');
 
     const run = this.spawn({ cwd, resume: sessionId, fork, mode, model, effort });
-    this.writeUser(run, text);
+    this.writeUser(run, content);
     const sid = await run.ready;
     return { sessionId: sid, runId: run.runId };
   }
@@ -282,10 +285,11 @@ export class Runner extends EventEmitter {
 
   shutdown() { clearInterval(this.reaper); for (const r of this.runs.values()) if (r.status !== 'exited') this.kill(r); }
 
-  writeUser(run, text) {
+  // content: text, or a list of content blocks (text and images)
+  writeUser(run, content) {
     run.lastActivity = Date.now();
     if (run.status === 'idle') { run.status = 'running'; this.emitRun(run); }
-    this.write(run, { type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, session_id: run.sessionId || '' });
+    this.write(run, { type: 'user', message: { role: 'user', content }, parent_tool_use_id: null, session_id: run.sessionId || '' });
   }
   control(run, request) { this.write(run, { type: 'control_request', request_id: `handoff-${++run.ctl}`, request }); }
   respond(run, requestId, response, error) {
