@@ -418,8 +418,9 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
     try {
       if (!url.pathname.startsWith('/api/')) return serveStatic(req, res, url.pathname);
       if (req.method !== 'GET' && req.method !== 'HEAD') {
-        // CSRF: same-origin JSON requests with our custom header only
-        if (req.headers['x-handoff'] !== '1') return json(res, 403, { error: 'missing header' });
+        // CSRF: same-origin JSON requests with our custom header only. Our own page always sends it,
+        // so without it the page is usually an old copy from before an update: say how to fix that.
+        if (req.headers['x-handoff'] !== '1') return json(res, 403, { error: 'This page is out of date. Reload it (on a phone, close the app fully and open it again).' });
         if (!sameOrigin(req)) return json(res, 403, { error: 'bad origin' });
       }
       for (const r of routes) {
