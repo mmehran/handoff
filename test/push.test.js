@@ -54,19 +54,26 @@ test('subscribe, send (signed and encrypted for the device), drop expired device
   assert.ok(crypto.verify('sha256', Buffer.from(`${h}.${c}`), { key, dsaEncoding: 'ieee-p1363' }, u(s)));
 
   // the device can decrypt it (RFC 8291, receiving side)
-  const body = opts.body;
-  const salt = body.subarray(0, 16), idlen = body[20], asPublic = body.subarray(21, 21 + idlen), ct = body.subarray(21 + idlen);
-  const hm = (key, data) => crypto.createHmac('sha256', key).update(data).digest();
-  const secret = ua.computeSecret(asPublic);
-  const ikm = hm(hm(auth, secret), Buffer.concat([Buffer.from('WebPush: info\0'), ua.getPublicKey(), asPublic, Buffer.from([1])]));
-  const prk = hm(salt, ikm);
-  const cek = hm(prk, Buffer.from('Content-Encoding: aes128gcm\0\x01')).subarray(0, 16);
-  const nonce = hm(prk, Buffer.from('Content-Encoding: nonce\0\x01')).subarray(0, 12);
-  const d = crypto.createDecipheriv('aes-128-gcm', cek, nonce);
-  d.setAuthTag(ct.subarray(-16));
-  const plain = Buffer.concat([d.update(ct.subarray(0, -16)), d.final()]);
-  assert.equal(plain.at(-1), 2);
-  assert.deepEqual(JSON.parse(plain.subarray(0, -1)), { title: '✅ Claude finished', body: 'Fix login bug · shop', url: '/#/s/abc', tag: 'abc:done' });
+  const open = body => {
+    const salt = body.subarray(0, 16), idlen = body[20], asPublic = body.subarray(21, 21 + idlen), ct = body.subarray(21 + idlen);
+    const hm = (key, data) => crypto.createHmac('sha256', key).update(data).digest();
+    const secret = ua.computeSecret(asPublic);
+    const ikm = hm(hm(auth, secret), Buffer.concat([Buffer.from('WebPush: info\0'), ua.getPublicKey(), asPublic, Buffer.from([1])]));
+    const prk = hm(salt, ikm);
+    const cek = hm(prk, Buffer.from('Content-Encoding: aes128gcm\0\x01')).subarray(0, 16);
+    const nonce = hm(prk, Buffer.from('Content-Encoding: nonce\0\x01')).subarray(0, 12);
+    const d = crypto.createDecipheriv('aes-128-gcm', cek, nonce);
+    d.setAuthTag(ct.subarray(-16));
+    const plain = Buffer.concat([d.update(ct.subarray(0, -16)), d.final()]);
+    assert.equal(plain.at(-1), 2);
+    return JSON.parse(plain.subarray(0, -1));
+  };
+  assert.deepEqual(open(opts.body), { title: '✅ Claude finished', body: 'Fix login bug · shop', url: '/#/s/abc', tag: 'abc:done' });
+
+  // an approval also carries its request id and (at most two) buttons
+  const allow = { action: 'allow', title: 'Allow' }, deny = { action: 'deny', title: 'Deny' };
+  await svc.send({ title: 'Approve?', body: 'Bash', url: '/#/s/abc', tag: 'abc:approval', permission: 'perm1', actions: [allow, deny, { action: 'more', title: 'More' }] }, { urgent: true });
+  assert.deepEqual(open(calls[1].opts.body), { title: 'Approve?', body: 'Bash', url: '/#/s/abc', tag: 'abc:approval', permission: 'perm1', actions: [allow, deny] });
 
   // the keys survive a restart; a device the push service says is gone is removed
   assert.equal(new PushService({ dataDir: dir, contact: 'x' }).publicKey, svc.publicKey);

@@ -91,9 +91,11 @@ export class PushService {
     return `vapid t=${head}.${claims}.${b64u(sig)}, k=${this.keys.publicKey}`;
   }
 
-  // { title, body, url, tag } to every subscribed device. Expired subscriptions are dropped.
+  // { title, body, url, tag } to every subscribed device (an approval also carries its permission id and
+  // Allow / Deny buttons). Expired subscriptions are dropped.
   async send(msg, { urgent = false, only } = {}) {
-    const payload = JSON.stringify({ title: msg.title, body: String(msg.body || '').slice(0, 1500), url: msg.url || '/', tag: msg.tag });
+    const payload = JSON.stringify({ title: msg.title, body: String(msg.body || '').slice(0, 1500), url: msg.url || '/', tag: msg.tag,
+      permission: msg.permission, actions: Array.isArray(msg.actions) ? msg.actions.slice(0, 2) : undefined });
     const results = await Promise.all(this.subs.filter(s => !only || s.endpoint === only).map(async s => {
       try {
         const r = await this.fetch(s.endpoint, {

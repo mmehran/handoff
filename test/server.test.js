@@ -436,3 +436,14 @@ test('the page loads its script and styles by versioned addresses, so no cache c
   assert.match(r.headers.get('content-type'), /javascript/);
   assert.equal((await (await fetch(base + '/some/spa/route')).text()).includes(`/app.js?v=${js[1]}`), true);
 });
+
+test('a share that reaches the server (service worker not installed yet) opens the New session page', async () => {
+  const fd = new FormData();
+  fd.append('text', 'Look at this');
+  const r = await fetch(base + '/share', { method: 'POST', body: fd, redirect: 'manual' });
+  assert.equal(r.status, 303);
+  assert.equal(r.headers.get('location'), '/#/new?shared=0');
+  const m = await (await fetch(base + '/manifest.webmanifest')).json();
+  assert.equal(m.share_target.action, '/share');
+  assert.deepEqual(m.shortcuts.map(s => s.url), ['/#/new', '/#/?search=1']);
+});

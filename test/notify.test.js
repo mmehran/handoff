@@ -275,3 +275,18 @@ test('mute covers sub-folders of a project (worktrees), single chats, and chats 
   again.setSessionMuted('c', false);
   assert.equal(make().mutedSessions.has('c'), false);
 });
+
+test('an approval notification carries the request id and Allow / Deny buttons (a plan: Approve / Keep planning)', async () => {
+  const pushed = [];
+  const runner = new EventEmitter();
+  const store = { liveSessions: () => [], pendingQuestion: () => null, sessionInfo: async () => ({ title: 'Fix login bug', cwd: 'D:\projects\shop' }) };
+  const n = new Notifier({ notify: {} }, { store, runner, log: () => {}, push: { has: () => true, send: async (m, o) => { pushed.push({ m, o }); return { sent: 1 }; } } }).start();
+  runner.emit('permission', { id: 'perm1', sessionId: 'aaaa1111-0000-4000-8000-000000000001', tool: 'Bash', input: '{"command":"npm test"}', cwd: 'D:\projects\shop' });
+  runner.emit('permission', { id: 'perm2', sessionId: 'aaaa1111-0000-4000-8000-000000000002', tool: 'ExitPlanMode', input: '{}', cwd: 'D:\projects\shop' });
+  await settle(); await settle();
+  n.stop();
+  assert.equal(pushed.length, 2);
+  assert.deepEqual([pushed[0].m.permission, pushed[0].m.actions.map(a => a.action + ':' + a.title), pushed[0].o.urgent], ['perm1', ['allow:Allow', 'deny:Deny'], true]);
+  assert.deepEqual(pushed[1].m.actions.map(a => a.title), ['Approve plan', 'Keep planning']);
+  assert.doesNotMatch(pushed[0].m.body, /Reply/, 'no WhatsApp reply instructions in a notification');
+});

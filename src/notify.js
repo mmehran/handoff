@@ -132,7 +132,8 @@ export class Notifier {
     this.runner.on('permission', p => {
       this.openPerm = { id: p.id, sessionId: p.sessionId, at: Date.now() };
       this.event('approval', p.sessionId, {
-        detail: `Tool: ${p.tool}${summarize(p.input) ? ' — ' + summarize(p.input) : ''}\n\nReply *yes* to allow or *no* to deny.`, cwd: p.cwd
+        detail: `Tool: ${p.tool}${summarize(p.input) ? ' — ' + summarize(p.input) : ''}\n\nReply *yes* to allow or *no* to deny.`, cwd: p.cwd,
+        permission: { id: p.id, tool: p.tool }
       });
     });
     this.runner.on('permission_resolved', p => { if (this.openPerm?.id === p.id) this.openPerm = null; });
@@ -286,7 +287,7 @@ export class Notifier {
     } catch { return ''; }
   }
 
-  event(kind, sessionId, { detail = '', cwd = '', title = '', force = false } = {}) {
+  event(kind, sessionId, { detail = '', cwd = '', title = '', force = false, permission = null } = {}) {
     if (!this.active || !this.wants(kind) || !sessionId) return false;
     if (this.isMuted(cwd) || this.mutedSessions.has(sessionId)) return false;
     if (inQuiet(this.quiet, this.now()) && !this.quietAllow.has(kind)) {
@@ -301,7 +302,7 @@ export class Notifier {
     this.last.set(key, t); this.sent.push(t);
     // the rate limits above are decided at once; the message is built (reading the transcript) and sent after
     const urgent = kind === 'approval' || kind === 'question';
-    this.compose(kind, sessionId, { detail, cwd, title }).then(m => {
+    this.compose(kind, sessionId, { detail, cwd, title, permission }).then(m => {
       if (m.muted) return; // listed under a muted project although it now works in another folder
       if (this.on) {
         this.send(m.text).then(() => this.log(`[notify] sent ${kind} for ${sessionId.slice(0, 8)}`))
@@ -312,7 +313,7 @@ export class Notifier {
     return true;
   }
 
-  async compose(kind, sessionId, { detail = '', cwd = '', title = '' } = {}) {
+  async compose(kind, sessionId, { detail = '', cwd = '', title = '', permission = null } = {}) {
     let info = null;
     try { info = await this.store.sessionInfo(sessionId); } catch { /* new session not on disk yet */ }
     const name = title || info?.title || 'Claude session';
@@ -323,7 +324,15 @@ export class Notifier {
       .filter(x => x !== false && x !== undefined && x !== null).join('\n').replace(/\n{3,}/g, '\n\n');
     // a phone notification: shorter, no WhatsApp reply instructions, opens the chat when tapped
     const pushBody = [`${name}${project ? ` · ${project}` : ''}`, detail.replace(/\n\nReply \*yes\*[\s\S]*$/, '').replace(/\nReply with the number[\s\S]*$/, '').replace(/\*/g, '')].filter(Boolean).join('\n');
-    return { text, muted: this.isMuted(info?.cwd), push: { title: head, body: pushBody, url: `/#/s/${sessionId}`, tag: `${sessionId}:${kind}` } };
+    const push = { title: head, body: pushBody, url: `/#/s/${sessionId}`, tag: `${sessionId}:${kind}` };
+    // an approval can be answered from the notification itself (where the phone shows buttons)
+    if (kind === 'approval' && permission?.id) {
+      push.permission = permission.id;
+      push.actions = permission.tool === 'ExitPlanMode'
+        ? [{ action: 'allow', title: 'Approve plan' }, { action: 'deny', title: 'Keep planning' }]
+        : [{ action: 'allow', title: 'Allow' }, { action: 'deny', title: 'Deny' }];
+    }
+    return { text, muted: this.isMuted(info?.cwd), push };
   }
 
   async sendWhatsApp(text) {

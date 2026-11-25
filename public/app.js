@@ -646,15 +646,16 @@ function photoPicker() {
       h('button', { class: 'icon', type: 'button', 'aria-label': 'Remove this photo', onclick: () => { photos.splice(i, 1); render(); } }, '×'))));
     button.replaceChildren('📷', ...[badge(photos.length)].filter(Boolean));
   };
-  input.addEventListener('change', async () => {
-    for (const f of [...input.files]) {
+  const add = async files => {
+    for (const f of files) {
       if (photos.length >= 4) { toast('At most 4 photos per message'); break; }
-      try { photos.push(await shrinkPhoto(f)); } catch { toast(`Couldn't read ${f.name} as a photo`); }
+      try { photos.push(await shrinkPhoto(f)); } catch { toast(`Couldn't read ${f.name || 'a file'} as a photo`); }
     }
-    input.value = '';
     render();
-  });
+  };
+  input.addEventListener('change', async () => { await add([...input.files]); input.value = ''; });
   return {
+    add,
     button, input, strip,
     count: () => photos.length,
     take: () => photos.map(({ media_type, data }) => ({ media_type, data })),
@@ -774,6 +775,7 @@ async function homeView() {
     };
     find.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(run, 350); });
     if (find.value) run();
+    if (new URLSearchParams(location.hash.split('?')[1] || '').has('search')) find.focus(); // the home-screen shortcut
   }
   if (twoPane()) return;
   const loadLive = async () => live.replaceChildren(...await liveCards());
@@ -1563,6 +1565,24 @@ async function newView(params) {
     h('div', { class: 'row opts' }, ...picks.els),
     h('div', { class: 'row' }, h('span', { class: 'grow' }), go), err));
   (cwd.value ? ta : cwd).focus();
+  if (params.get('shared') === '0') toast('Open Handoff once from the Home Screen; after that, sharing to it works', 6000);
+  else if (params.has('shared')) takeShared(ta, photos);
+}
+
+// What another app shared to Handoff (kept by the service worker): into the prompt and photos, once.
+async function takeShared(ta, photos) {
+  if (!('caches' in window)) return;
+  try {
+    const cache = await caches.open('handoff-share');
+    const text = await (await cache.match('/shared/text'))?.text();
+    const files = [];
+    for (let i = 0; i < 4; i++) { const r = await cache.match(`/shared/photo/${i}`); if (r) files.push(await r.blob()); }
+    for (const key of await cache.keys()) await cache.delete(key);
+    if (text) ta.value = ta.value ? `${ta.value}\n${text}` : text;
+    if (files.length) await photos.add(files);
+    if (text || files.length) toast('Shared into a new session: pick the project folder, then start');
+  } catch { /* nothing kept */ }
+  history.replaceState(null, '', '#/new'); // a reload doesn't take it again
 }
 
 // ---------- router ----------
@@ -1591,7 +1611,7 @@ async function boot() {
   try { state.me = await api('GET', '/api/me'); }
   catch { return; }
   showWhatsApp(state.me.whatsapp);
-  if (state.me.push && pushSupported()) pushRegistration().catch(() => {});
+  if ('serviceWorker' in navigator) pushRegistration().catch(() => {}); // notifications, and "Share → Handoff"
   optionsReady(); // start fetching the model list early
   connectEvents();
   renderSide();

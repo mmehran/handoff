@@ -445,6 +445,9 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
     const token = parseCookies(req.headers.cookie)[COOKIE];
     const ctx = { url, ip, token };
     try {
+      // "Share → Handoff" is answered by the page's service worker; if that isn't installed yet, the
+      // share arrives here: open the New session page instead of an error (what was shared is lost)
+      if (url.pathname === '/share' && req.method === 'POST') { req.resume(); res.writeHead(303, { Location: '/#/new?shared=0' }); return res.end(); }
       if (!url.pathname.startsWith('/api/')) return serveStatic(req, res, url.pathname, filesHash.slice(0, 12));
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         // CSRF: same-origin JSON requests with our custom header only. Our own page always sends it,
