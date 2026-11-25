@@ -101,6 +101,12 @@ code, pre, .mono { font-variant-ligatures: none; }
   body.two-pane #view { padding: 18px 28px 28px; }
 }
 @media (min-width: 1400px) { :root { --side-w: 360px; --content-w: 1040px; } }
+.side-new { width: 100%; margin-bottom: 4px; }
+#side h2 { margin-top: 18px; }
+#side input[type=search] { margin-bottom: 8px; padding: 8px 12px; }
+.welcome { text-align: center; padding: 10vh 20px 4vh; max-width: 520px; margin: 0 auto; }
+.welcome h1 { font-size: 22px; margin: 14px 0 6px; }
+.welcome-icon { width: 64px; height: 64px; margin: 0 auto; border-radius: 18px; background: url("/icon-192.png") center / cover; box-shadow: var(--shadow-2); }
 
 /* ---------- buttons ---------- */
 .btn {

@@ -411,6 +411,7 @@ async function showAlertSettings() {
 // ---------- login ----------
 function showLogin() {
   state.me = null;
+  renderSide();
   showWhatsApp(null);
   state.es?.close(); state.es = null;
   setTop('Handoff');
@@ -541,7 +542,10 @@ function renderPerms() {
 }
 
 let runListeners = [];
-function onRunChange(r) { runListeners.forEach(fn => fn(r)); }
+function onRunChange(r) {
+  runListeners.forEach(fn => fn(r));
+  clearTimeout(onRunChange.t); onRunChange.t = setTimeout(() => refreshSide(), 400); // several changes at once: one refresh
+}
 
 // ---------- search ----------
 // Text with every search word highlighted (built as DOM nodes, never HTML).
@@ -634,18 +638,93 @@ function photoPicker() {
 }
 
 // ---------- views ----------
+const base = p => String(p || '').split(/[\\/]/).filter(Boolean).pop() || p;
+// Cards for what is running now: sessions started from here, and Claude Code open on the laptop.
+async function liveCards(compact = false) {
+  const d = await api('GET', '/api/live');
+  const seen = new Set(), cards = [];
+  for (const r of d.runs) {
+    if (!r.sessionId) continue;
+    seen.add(r.sessionId);
+    cards.push(h('a', { class: 'card', href: `#/s/${r.sessionId}` },
+      h('div', { class: 't' }, h('span', {}, r.title || 'Remote session'), h('span', { class: `chip ${r.status}` }, compact ? r.status : 'remote · ' + r.status)),
+      h('div', { class: 's' }, compact ? base(r.cwd) : r.cwd)));
+  }
+  for (const l of d.live) {
+    if (seen.has(l.sessionId)) continue;
+    const where = l.entrypoint === 'claude-desktop' ? 'Desktop' : (l.entrypoint || 'CLI');
+    cards.push(h('a', { class: 'card', href: `#/s/${l.sessionId}` },
+      h('div', { class: 't' }, h('span', {}, l.title || l.name || l.sessionId.slice(0, 8)),
+        l.question ? h('span', { class: 'chip question' }, 'question') : h('span', { class: `chip ${l.status}` }, l.status)),
+      h('div', { class: 's' }, `${where} · ${compact ? base(l.cwd) : l.cwd}`)));
+  }
+  return cards.length ? cards : [h('div', { class: 'empty' }, 'No Claude Code sessions are running right now.')];
+}
+function projectCards(q = '', compact = false) {
+  q = q.toLowerCase();
+  const items = state.projects.filter(p => !q || p.cwd.toLowerCase().includes(q) || p.name.toLowerCase().includes(q));
+  return items.length ? items.map(p => h('a', { class: 'card', href: `#/p/${encodeURIComponent(p.key)}`, 'data-project': p.key },
+    h('div', { class: 't' }, h('span', {}, p.name), p.live ? h('span', { class: 'chip busy' }, `${p.live} live`) : null),
+    h('div', { class: 's' }, `${p.sessions} session${p.sessions === 1 ? '' : 's'} · ${ago(p.lastActivity)}${compact ? '' : ' · ' + p.cwd}`)))
+    : [h('div', { class: 'empty' }, 'No projects found.')];
+}
+
+// ---------- wide screens: sessions and projects stay in a sidebar beside the open page ----------
+const wide = matchMedia('(min-width: 1000px)');
+const twoPane = () => wide.matches && !!state.me;
+const side = { timer: null, live: null, list: null, filter: null };
+function renderSide() {
+  const el = $('#side');
+  document.body.classList.toggle('two-pane', twoPane());
+  clearInterval(side.timer); side.timer = null;
+  if (!twoPane()) { el.replaceChildren(); side.live = null; return; }
+  side.live = h('div', { class: 'list' }, h('div', { class: 'muted small' }, 'Loading…'));
+  side.filter = h('input', { type: 'search', placeholder: 'Filter projects…', 'aria-label': 'Filter projects' });
+  side.list = h('div', { class: 'list' });
+  side.filter.addEventListener('input', () => { side.list.replaceChildren(...projectCards(side.filter.value, true)); markActive(); });
+  el.replaceChildren(h('a', { href: '#/new', class: 'btn primary side-new' }, '＋ New session'),
+    h('h2', {}, 'Live now'), side.live, h('h2', {}, 'Projects'), side.filter, side.list);
+  refreshSide(true);
+  side.timer = setInterval(() => { if (!document.hidden) refreshSide(); }, 5000);
+}
+let sideTick = 0;
+async function refreshSide(withProjects = false) {
+  if (!side.live) return;
+  try {
+    // projects change slowly: every 30s; what is live: every 5s and on every run change
+    if (withProjects || ++sideTick % 6 === 0) { state.projects = await api('GET', '/api/projects'); side.list.replaceChildren(...projectCards(side.filter.value, true)); }
+    side.live.replaceChildren(...await liveCards(true));
+    markActive();
+  } catch { /* offline: the dot in the top bar says so */ }
+}
+// highlight the open session, and the project it belongs to
+function markActive() {
+  const hash = location.hash || '#/';
+  for (const a of document.querySelectorAll('#side a.card')) {
+    const href = a.getAttribute('href');
+    a.classList.toggle('active', href.startsWith('#/s/') ? hash.split('?')[0] === href : a.dataset.project === state.activeProject);
+  }
+}
+wide.addEventListener?.('change', () => { renderSide(); if (state.me && /^#?\/?$/.test(location.hash)) route(); });
+addEventListener('hashchange', markActive);
+
 async function homeView() {
   setTop('Handoff');
-  const live = h('div', { class: 'list' }, h('div', { class: 'muted small' }, 'Loading…'));
-  const filter = h('input', { type: 'search', placeholder: 'Filter projects…' });
-  const projList = h('div', { class: 'list' });
+  state.activeProject = null; markActive();
   // search across every chat; while it has text, its results take the place of the page
   const find = state.me.search ? h('input', { type: 'search', class: 'find', placeholder: 'Search all chats…', 'aria-label': 'Search all chats', value: state.homeFind || '' }) : null;
   const results = h('div', { class: 'list', hidden: true });
-  const normal = h('div', {}, h('h2', {}, 'Live now'), live, h('h2', {}, 'Projects'), filter, projList);
-  view.replaceChildren(
-    h('div', { class: 'row' }, h('a', { href: '#/new', class: 'btn primary' }, '+ New session'), h('span', { class: 'grow' })),
-    ...(find ? [find, results] : []), normal);
+  const live = h('div', { class: 'list' }, h('div', { class: 'muted small' }, 'Loading…'));
+  const filter = h('input', { type: 'search', placeholder: 'Filter projects…', 'aria-label': 'Filter projects' });
+  const projList = h('div', { class: 'list' });
+  // with the sidebar showing sessions and projects, the page itself is for search and starting work
+  const normal = twoPane()
+    ? h('div', { class: 'welcome' }, h('div', { class: 'welcome-icon' }), h('h1', {}, 'Pick up where Claude left off'),
+        h('p', { class: 'muted' }, 'Open a live session or a project on the left, search every chat above, or start something new.'))
+    : h('div', {}, h('h2', {}, 'Live now'), live, h('h2', {}, 'Projects'), filter, projList);
+  view.replaceChildren(...[
+    twoPane() ? null : h('div', { class: 'row' }, h('a', { href: '#/new', class: 'btn primary' }, '＋ New session'), h('span', { class: 'grow' })),
+    ...(find ? [find, results] : []), normal].filter(Boolean));
   if (find) {
     let timer, seq = 0;
     const run = async () => {
@@ -659,8 +738,8 @@ async function homeView() {
         const d = await api('GET', `/api/search?q=${encodeURIComponent(q)}`);
         if (my !== seq) return;
         const cards = d.results.map(r => h('a', { class: 'card', href: `#/s/${r.sessionId}?find=${encodeURIComponent(q)}` },
-          h('div', { class: 't' }, ...marked(r.title, terms)),
-          h('div', { class: 's' }, `${(r.cwd || r.projectKey).split(/[\\/]/).filter(Boolean).pop()} · ${ago(r.mtime)}${r.total ? ` · ${r.total} message${r.total === 1 ? '' : 's'}` : ''}`),
+          h('div', { class: 't' }, h('span', {}, ...marked(r.title, terms))),
+          h('div', { class: 's' }, `${base(r.cwd || r.projectKey)} · ${ago(r.mtime)}${r.total ? ` · ${r.total} message${r.total === 1 ? '' : 's'}` : ''}`),
           ...r.hits.map(x => h('div', { class: 'hit' }, h('span', { class: 'who' }, x.kind === 'user' ? 'You' : 'Claude'), ' ', ...marked(x.snippet, terms)))));
         results.replaceChildren(...[indexingNote(d), ...(cards.length ? cards : [h('div', { class: 'empty' }, 'No chat contains all of those words.')])].filter(Boolean));
       } catch (x) { if (my === seq) results.replaceChildren(h('div', { class: 'empty' }, x.message)); }
@@ -668,38 +747,13 @@ async function homeView() {
     find.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(run, 350); });
     if (find.value) run();
   }
-
-  const loadLive = async () => {
-    const d = await api('GET', '/api/live');
-    const seen = new Set();
-    const cards = [];
-    for (const r of d.runs) {
-      if (!r.sessionId) continue;
-      seen.add(r.sessionId);
-      cards.push(h('a', { class: 'card', href: `#/s/${r.sessionId}` },
-        h('div', { class: 't' }, r.title || 'Remote session', h('span', { class: `chip ${r.status}` }, 'remote · ' + r.status)),
-        h('div', { class: 's' }, r.cwd)));
-    }
-    for (const l of d.live) {
-      if (seen.has(l.sessionId)) continue;
-      cards.push(h('a', { class: 'card', href: `#/s/${l.sessionId}` },
-        h('div', { class: 't' }, l.title || l.name || l.sessionId.slice(0, 8),
-          l.question ? h('span', { class: 'chip question' }, 'question') : h('span', { class: `chip ${l.status}` }, l.status)),
-        h('div', { class: 's' }, `${l.entrypoint === 'claude-desktop' ? 'Desktop' : (l.entrypoint || 'CLI')} · ${l.cwd}`)));
-    }
-    live.replaceChildren(...(cards.length ? cards : [h('div', { class: 'empty' }, 'No Claude Code sessions are running right now.')]));
-  };
-  const renderProjects = () => {
-    const q = filter.value.toLowerCase();
-    const items = state.projects.filter(p => !q || p.cwd.toLowerCase().includes(q) || p.name.toLowerCase().includes(q));
-    projList.replaceChildren(...items.map(p => h('a', { class: 'card', href: `#/p/${encodeURIComponent(p.key)}` },
-      h('div', { class: 't' }, p.name, p.live ? h('span', { class: 'chip busy' }, `${p.live} live`) : null),
-      h('div', { class: 's' }, `${p.sessions} session${p.sessions === 1 ? '' : 's'} · ${ago(p.lastActivity)} · ${p.cwd}`))));
-    if (!items.length) projList.replaceChildren(h('div', { class: 'empty' }, 'No projects found.'));
-  };
+  if (twoPane()) return;
+  const loadLive = async () => live.replaceChildren(...await liveCards());
+  const renderProjects = () => projList.replaceChildren(...projectCards(filter.value));
   filter.addEventListener('input', renderProjects);
   await Promise.all([loadLive(), api('GET', '/api/projects').then(p => { state.projects = p; renderProjects(); })]);
-  const t = setInterval(() => { if (location.hash === '' || location.hash === '#/') loadLive().catch(() => {}); else clearInterval(t); }, 5000);
+  const timer = setInterval(() => { if (!document.hidden) loadLive().catch(() => {}); }, 5000);
+  state.cleanup.push(() => clearInterval(timer));
   runListeners = [() => loadLive().catch(() => {})];
 }
 
@@ -707,6 +761,7 @@ async function projectView(key) {
   const projects = state.projects.length ? state.projects : (state.projects = await api('GET', '/api/projects'));
   const p = projects.find(x => x.key === key) || { name: key, cwd: '' };
   setTop(p.name, '#/');
+  state.activeProject = key; markActive();
   const list = h('div', { class: 'list' }, h('div', { class: 'muted small' }, 'Loading…'));
   // WhatsApp alerts can be muted per project (kept on the server)
   let muted = false;
@@ -999,6 +1054,7 @@ async function sessionView(id, params = new URLSearchParams()) {
   let info = await api('GET', `/api/sessions/${id}`);
   if (stale()) return;
   setTop(info.title || 'Session', info.projectKey ? `#/p/${encodeURIComponent(info.projectKey)}` : '#/');
+  state.activeProject = info.projectKey; markActive();
 
   const status = h('span', { class: 'chip' });
   const settings = h('div', { class: 'settings' });
@@ -1316,6 +1372,7 @@ async function boot() {
   if (state.me.push && pushSupported()) pushRegistration().catch(() => {});
   optionsReady(); // start fetching the model list early
   connectEvents();
+  renderSide();
   route();
 }
 boot();
