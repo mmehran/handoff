@@ -96,12 +96,17 @@ export class SessionStore {
   persist() {
     try { fs.writeFileSync(SESS_FILE, JSON.stringify(Object.fromEntries(this.map)), { mode: 0o600 }); } catch { /* ignore */ }
   }
-  create(ip, ua) {
+  // remember: "Remember me" was ticked, so the login lasts rememberDays instead of the idle/max limits
+  create(ip, ua, { remember = false } = {}) {
     const token = crypto.randomBytes(32).toString('base64url');
     const now = Date.now();
-    this.map.set(sha(token), { created: now, lastSeen: now, ip, ua: String(ua || '').slice(0, 200) });
+    this.map.set(sha(token), { created: now, lastSeen: now, ip, ua: String(ua || '').slice(0, 200), ...(remember ? { remember: true } : {}) });
     this.persist();
     return token;
+  }
+  expired(s, now = Date.now()) {
+    if (s.remember && this.cfg.rememberDays > 0) return now - s.created > this.cfg.rememberDays * 86400e3;
+    return now - s.lastSeen > this.cfg.sessionIdleHours * 3600e3 || now - s.created > this.cfg.sessionMaxDays * 86400e3;
   }
   check(token) {
     if (!token) return null;
@@ -109,9 +114,7 @@ export class SessionStore {
     const s = this.map.get(key);
     if (!s) return null;
     const now = Date.now();
-    if (now - s.lastSeen > this.cfg.sessionIdleHours * 3600e3 || now - s.created > this.cfg.sessionMaxDays * 86400e3) {
-      this.map.delete(key); this.persist(); return null;
-    }
+    if (this.expired(s, now)) { this.map.delete(key); this.persist(); return null; }
     if (now - s.lastSeen > 60e3) { s.lastSeen = now; this.persist(); }
     return s;
   }
@@ -119,10 +122,7 @@ export class SessionStore {
   destroyAll() { this.map.clear(); this.persist(); }
   list() { return [...this.map.values()]; }
   prune() {
-    for (const [k, s] of this.map) {
-      const now = Date.now();
-      if (now - s.lastSeen > this.cfg.sessionIdleHours * 3600e3 || now - s.created > this.cfg.sessionMaxDays * 86400e3) this.map.delete(k);
-    }
+    for (const [k, s] of this.map) if (this.expired(s)) this.map.delete(k);
     this.persist();
   }
 }

@@ -15,6 +15,7 @@ Every setting is an environment variable. Handoff reads them from `.env` in the 
 | `HANDOFF_TOTP_SECRET` | empty | Base32 secret for authenticator-app 2FA. Empty = 2FA off. Written by `npm run setup`. |
 | `HANDOFF_LOGIN_IDLE_HOURS` | `24` | A sign-in expires after this much inactivity. |
 | `HANDOFF_LOGIN_MAX_DAYS` | `7` | A sign-in expires after this long regardless. |
+| `HANDOFF_REMEMBER_DAYS` | `30` | Ticking **Remember me** on the sign-in page keeps that device signed in for this many days, even when it's idle or the browser is closed. `0` removes the option. Without it, a sign-in also ends when the browser is closed. |
 
 ## Server
 
@@ -43,7 +44,8 @@ The Cloudflare **API** token is never stored. `npm run setup:domain` reads it fr
 | `CLAUDE_CODE_OAUTH_TOKEN` | empty | Optional token from `claude setup-token`, used only for sessions Handoff starts. Empty = your normal CLI login. |
 | `HANDOFF_DEFAULT_MODE` | `manual` | Permission mode for sessions started from the phone: `manual` (ask before tools), `acceptEdits`, `plan`, `auto`, `dontAsk`. |
 | `HANDOFF_ALLOW_BYPASS` | `false` | Offer `bypassPermissions` (no approvals at all) in the mode menu. |
-| `HANDOFF_ALLOWED_ROOTS` | empty | Only allow new sessions inside these folders. Separator: `;` on Windows, `:` on macOS/Linux. Empty = any existing folder. |
+| `HANDOFF_ALLOWED_ROOTS` | empty | Only allow new sessions inside these folders, and only browse files inside them. Separator: `;` on Windows, `:` on macOS/Linux. Empty = any existing folder. |
+| `HANDOFF_FILE_BROWSER` | `false` | Adds a **Files** tab to every session, to browse its project folder and open text, code and images (read-only). See [security](security.md#files-tab). |
 | `HANDOFF_MAX_RUNS` | `3` | Most Claude processes Handoff runs at once. |
 | `HANDOFF_IDLE_KILL_MINUTES` | `15` | Stop an idle process Handoff started. It resumes on the next message. |
 | `HANDOFF_PERMISSION_TIMEOUT_MINUTES` | `30` | Auto-deny a tool approval nobody answered. |

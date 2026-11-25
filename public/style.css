@@ -163,3 +163,38 @@ select.pick.off { opacity: .4; pointer-events: none; }
 .q-status { font-size: 12px; color: var(--muted); margin-top: 8px; }
 .qcard input[type=text] { margin-top: 2px; }
 .chip.question { background: var(--accent); color: #fff; }
+
+/* ---------- Chat / Files tabs and the file browser ---------- */
+.tabs { display: flex; gap: 4px; margin: 0 0 10px; border-bottom: 1px solid var(--line); }
+.tab { background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 8px 16px; color: var(--muted); font-weight: 600; }
+.tab.on { color: var(--text); border-bottom-color: var(--accent); }
+.files { display: flex; flex-direction: column; gap: 8px; }
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 5px; }
+.crumbs a { color: var(--accent); text-decoration: none; }
+.crumbs .sep { color: var(--muted); }
+.flist { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.frow { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 12px; color: inherit; text-decoration: none; border-top: 1px solid var(--line); }
+.frow:first-child { border-top: 0; }
+a.frow:hover { background: var(--panel2); }
+.frow.off { color: var(--muted); cursor: default; }
+.ficon { flex: none; width: 1.5em; text-align: center; }
+.fname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fmeta { flex: none; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.fcode { display: flex; overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+.fcode pre { margin: 0; padding: 10px 12px; font-family: var(--mono); font-size: 12.5px; line-height: 1.5; tab-size: 4; }
+.fcode .gutter { flex: none; position: sticky; left: 0; text-align: right; color: var(--muted); background: var(--panel); border-right: 1px solid var(--line); user-select: none; }
+.fcode .code { flex: 1; white-space: pre; }
+.fcode.wrap .code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.fcode.wrap .gutter { display: none; }
+.fimg { text-align: center; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: repeating-conic-gradient(#8883 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
+.fimg img { max-width: 100%; max-height: 75vh; height: auto; vertical-align: middle; }
+a.btn { color: var(--text); }
+@media (pointer: coarse) { .frow { padding: 12px; } .tab { min-height: 44px; } }
+@media (max-width: 600px) { .fmeta { display: none; } .tabs .tab { flex: 1; } }
+
+/* ---------- warning banner (WhatsApp alerts can't be delivered) ---------- */
+#banner { display: flex; align-items: flex-start; gap: 10px; padding: 9px 14px; font-size: 13.5px; line-height: 1.4;
+  background: color-mix(in srgb, var(--warn) 16%, var(--panel)); border-bottom: 1px solid var(--warn); overflow-wrap: anywhere; }
+#banner code { font-family: var(--mono); font-size: .92em; background: var(--panel2); padding: 1px 4px; border-radius: 4px; }
+#banner .ban-icon { flex: none; }
+#banner .icon { flex: none; margin: -4px -6px -4px 0; font-size: 18px; line-height: 1; }

@@ -3,7 +3,7 @@
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const view = $('#view');
-const state = { me: null, runs: new Map(), perms: new Map(), es: null, projects: [], options: null, cleanup: [] };
+const state = { me: null, runs: new Map(), perms: new Map(), es: null, projects: [], options: null, cleanup: [], writes: 0 };
 // same labels as Claude Desktop's menus
 const MODE_LABELS = { manual: 'Ask permissions', acceptEdits: 'Accept edits', plan: 'Plan mode', auto: 'Auto', bypassPermissions: 'Bypass permissions' };
 const EFFORT_LABELS = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
@@ -78,11 +78,13 @@ const size = b => (b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.rou
 
 // ---------- API ----------
 async function api(method, url, body) {
+  const write = method !== 'GET';
+  if (write) state.writes++; // a message or an approval on its way: the page doesn't reload under it
   const res = await fetch(url, {
     method, credentials: 'same-origin',
     headers: body !== undefined ? { 'Content-Type': 'application/json', 'X-Handoff': '1' } : { 'X-Handoff': '1' },
     body: body !== undefined ? JSON.stringify(body) : undefined
-  });
+  }).finally(() => { if (write) state.writes--; });
   if (res.status === 401 && url !== '/api/login') { showLogin(); throw new Error('unauthorized'); }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || res.statusText);
@@ -152,19 +154,29 @@ $('#menu').addEventListener('click', () => {
 // ---------- login ----------
 function showLogin() {
   state.me = null;
+  showWhatsApp(null);
   state.es?.close(); state.es = null;
   setTop('Handoff');
   const err = h('div', { class: 'err' });
   const pw = h('input', { type: 'password', placeholder: 'Password', autocomplete: 'current-password', required: true });
   const code = h('input', { type: 'text', placeholder: '6-digit code (2FA)', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '6' });
+  const remember = h('input', { type: 'checkbox', id: 'remember', checked: store.get('remember', false) });
+  const rememberRow = h('label', { for: 'remember', class: 'small muted row', hidden: true }, remember, h('span', { class: 'remember-text' }, 'Remember me'));
   const btn = h('button', { class: 'btn primary', type: 'submit' }, 'Sign in');
   const form = h('form', { class: 'login', onsubmit: async e => {
     e.preventDefault(); btn.disabled = true; err.textContent = '';
-    try { await api('POST', '/api/login', { password: pw.value, code: code.value }); await boot(); }
+    const keep = !rememberRow.hidden && remember.checked;
+    try { await api('POST', '/api/login', { password: pw.value, code: code.value, remember: keep }); store.set('remember', keep); await boot(); }
     catch (x) { err.textContent = x.message; btn.disabled = false; }
-  } }, h('h1', {}, 'Handoff'), h('div', { class: 'muted small' }, 'Remote control for Claude Code on your laptop'), pw, code, btn, err);
+  } }, h('h1', {}, 'Handoff'), h('div', { class: 'muted small' }, 'Remote control for Claude Code on your laptop'), pw, code, rememberRow, btn, err);
   view.replaceChildren(form);
   pw.focus();
+  // the option only shows when the server allows it (HANDOFF_REMEMBER_DAYS > 0)
+  fetch('/api/login-options').then(r => r.json()).then(o => {
+    if (!o.rememberDays) return;
+    rememberRow.lastChild.textContent = `Remember me on this device for ${o.rememberDays} day${o.rememberDays === 1 ? '' : 's'}`;
+    rememberRow.hidden = false;
+  }).catch(() => {});
 }
 
 // ---------- global events (runs + permissions) ----------
@@ -192,7 +204,7 @@ function connectEvents() {
   const startPolling = () => {
     if (state.livePoll || state.es !== es) return;
     const poll = () => api('GET', '/api/live')
-      .then(d => { applyLive(d.runs, d.permissions); if (!streaming) setConn('poll', 'live updates by polling'); })
+      .then(d => { applyLive(d.runs, d.permissions); checkVersion(d.version); showWhatsApp(d.whatsapp); if (!streaming) setConn('poll', 'live updates by polling'); })
       .catch(x => { if (x.message !== 'unauthorized') setConn('off', 'offline: cannot reach the laptop, retrying'); });
     poll(); state.livePoll = setInterval(poll, 3000);
   };
@@ -211,6 +223,8 @@ function connectEvents() {
     setConn('on', 'live');
     const d = JSON.parse(e.data);
     applyLive(d.runs, d.permissions);
+    checkVersion(d.version);
+    showWhatsApp(d.whatsapp);
   });
   es.addEventListener('run', e => {
     const r = JSON.parse(e.data);
@@ -224,6 +238,23 @@ function connectEvents() {
     if (navigator.vibrate) navigator.vibrate(150);
   });
   es.addEventListener('permission_resolved', e => { state.perms.delete(JSON.parse(e.data).id); renderPerms(); });
+  es.addEventListener('whatsapp', e => showWhatsApp(JSON.parse(e.data)));
+}
+
+// WhatsApp alerts that can't be delivered fail silently, so say so at the top of every page until it's fixed.
+// × hides it until the problem changes.
+function showWhatsApp(s) {
+  const b = $('#banner');
+  const problem = s?.enabled ? s.problem : null;
+  if (!problem || state.waHidden === problem) { b.hidden = true; return; }
+  const text = {
+    unlinked: [`WhatsApp alerts are paused: the sending phone got unlinked. On the laptop, open ${s.qrUrl} and scan the code with that phone (WhatsApp → Settings → Linked devices → Link a device).`],
+    'not-running': ["WhatsApp alerts are paused: the WhatsApp sender isn't running on the laptop. Start Docker; if it doesn't come back by itself, run ", h('code', {}, 'docker compose up -d'), ' in the folder with docker-compose.yml.'],
+    offline: ["WhatsApp alerts are delayed: the sender can't reach WhatsApp right now. Is the laptop online?"]
+  }[problem] || [`WhatsApp alerts can't be sent (${problem}).`];
+  b.replaceChildren(h('span', { class: 'ban-icon' }, '⚠️'), h('span', { class: 'grow' }, ...text),
+    h('button', { class: 'icon', 'aria-label': 'Hide this warning', onclick: () => { state.waHidden = problem; b.hidden = true; } }, '×'));
+  b.hidden = false;
 }
 
 function renderPerms() {
@@ -369,9 +400,86 @@ function answerQuestionCard(card, text) {
   card.append(h('div', { class: 'q-status' }, 'Answered' + (m && m[1] ? ': ' + m[1].slice(0, 300) : '')));
 }
 
-async function sessionView(id) {
+// ---------- files (read-only browser of the session's folder, HANDOFF_FILE_BROWSER) ----------
+// What is open lives in the address (#/s/<id>?dir=src or ?file=src/app.js), so the phone's back
+// button steps back through folders and files.
+const fsize = b => (b < 1000 ? `${b} B` : size(b));
+function filesPanel(id) {
+  const el = h('div', { class: 'files' });
+  const url = (what, p) => `/api/sessions/${id}/${what}?path=${encodeURIComponent(p)}`;
+  const link = (key, p) => `#/s/${id}?${key}=${encodeURIComponent(p)}`;
+  let lastDir = '', seq = 0;
+
+  const crumbs = (folder, rel) => {
+    const parts = rel ? rel.split('/') : [];
+    const out = [parts.length ? h('a', { href: link('dir', '') }, folder) : h('b', {}, folder)];
+    parts.forEach((p, i) => {
+      out.push(h('span', { class: 'sep' }, '/'));
+      out.push(i === parts.length - 1 ? h('b', {}, p) : h('a', { href: link('dir', parts.slice(0, i + 1).join('/')) }, p));
+    });
+    return h('div', { class: 'crumbs mono' }, ...out);
+  };
+
+  const renderDir = d => {
+    lastDir = d.path;
+    const up = d.path.includes('/') ? d.path.slice(0, d.path.lastIndexOf('/')) : '';
+    const rows = d.entries.map(e => {
+      const p = d.path ? `${d.path}/${e.name}` : e.name;
+      const icon = e.type === 'dir' ? '📁' : e.kind === 'image' ? '🖼️' : e.kind === 'other' ? '📦' : '📄';
+      const kids = [h('span', { class: 'ficon' }, icon), h('span', { class: 'fname' }, e.name),
+        h('span', { class: 'fmeta' }, e.type === 'dir' ? '' : `${fsize(e.size)} · ${ago(e.mtime)}`)];
+      if (e.type === 'file' && e.kind === 'other') return h('div', { class: 'frow off', title: 'This file type can\'t be previewed' }, ...kids);
+      return h('a', { class: 'frow', href: link(e.type === 'dir' ? 'dir' : 'file', p) }, ...kids);
+    });
+    if (d.path) rows.unshift(h('a', { class: 'frow', href: link('dir', up) }, h('span', { class: 'ficon' }, '↩'), h('span', { class: 'fname' }, '..')));
+    el.replaceChildren(...[crumbs(d.folder, d.path),
+      rows.length ? h('div', { class: 'flist' }, ...rows) : h('div', { class: 'empty' }, 'This folder is empty.'),
+      d.truncated && h('div', { class: 'small muted' }, `Only the first ${d.entries.length} entries are shown.`)].filter(Boolean));
+  };
+
+  const renderFile = f => {
+    const dir = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '';
+    lastDir = dir;
+    const tools = h('div', { class: 'row small muted' }, `${fsize(f.size)} · ${ago(f.mtime)}`, h('span', { class: 'grow' }));
+    let body;
+    if (f.kind === 'image') {
+      body = f.tooLarge ? h('div', { class: 'empty' }, 'This image is too large to show here (over 20 MB).')
+        : h('div', { class: 'fimg' }, h('img', { src: url('raw', f.path), alt: f.name }));
+      if (!f.tooLarge) tools.append(h('a', { class: 'btn', href: url('raw', f.path), target: '_blank', rel: 'noopener' }, 'Full size'));
+    } else if (f.kind === 'other') {
+      body = h('div', { class: 'empty' }, 'This file can\'t be previewed. Only text, code and images are shown.');
+    } else {
+      const lines = f.text.split('\n').length - (f.text.endsWith('\n') ? 1 : 0);
+      tools.firstChild.textContent += ` · ${lines} line${lines === 1 ? '' : 's'}`;
+      body = h('div', { class: 'fcode' + (store.get('wrap', false) ? ' wrap' : '') },
+        h('pre', { class: 'gutter', 'aria-hidden': 'true', text: Array.from({ length: Math.max(lines, 1) }, (_, i) => i + 1).join('\n') }),
+        h('pre', { class: 'code', text: f.text }));
+      const wrap = h('button', { class: 'btn', onclick: () => { const on = body.classList.toggle('wrap'); store.set('wrap', on); wrap.textContent = on ? 'No wrap' : 'Wrap lines'; } },
+        body.classList.contains('wrap') ? 'No wrap' : 'Wrap lines');
+      tools.append(wrap);
+    }
+    el.replaceChildren(...[crumbs(f.folder, f.path), tools,
+      f.truncated && h('div', { class: 'notice' }, 'This file is large: only the first 1 MB is shown.'), body].filter(Boolean));
+  };
+
+  const show = async params => {
+    const my = ++seq; // ignore answers for a folder or file the user has already left
+    el.replaceChildren(h('div', { class: 'muted small' }, 'Loading…'));
+    try {
+      if (params.has('file')) { const f = await api('GET', url('file', params.get('file'))); if (my === seq) renderFile(f); }
+      else { const d = await api('GET', url('files', params.get('dir') || '')); if (my === seq) renderDir(d); }
+    } catch (x) {
+      if (my === seq && x.message !== 'unauthorized') el.replaceChildren(h('div', { class: 'row' }, h('a', { class: 'btn', href: link('dir', '') }, 'Back to the top folder')), h('div', { class: 'empty' }, x.message));
+    }
+  };
+  return { el, show, lastDir: () => lastDir };
+}
+
+async function sessionView(id, params = new URLSearchParams()) {
   setTop('Session', '#/');
+  const gen = state.gen, stale = () => gen !== state.gen; // the user went elsewhere while this was loading
   let info = await api('GET', `/api/sessions/${id}`);
+  if (stale()) return;
   setTop(info.title || 'Session', info.projectKey ? `#/p/${encodeURIComponent(info.projectKey)}` : '#/');
 
   const status = h('span', { class: 'chip' });
@@ -450,7 +558,7 @@ async function sessionView(id) {
     }
     if (!nodes.length) return;
     if (atTop) msgs.prepend(...nodes); else { msgs.append(...nodes); for (const p of pending) msgs.append(p.el); }
-    if (stick) scrollTo(0, document.body.scrollHeight);
+    if (stick && !chat.hidden) scrollTo(0, document.body.scrollHeight);
   };
 
   const doSend = async () => {
@@ -479,9 +587,28 @@ async function sessionView(id) {
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doSend(); } });
   ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, innerHeight * 0.4) + 'px'; });
   const composer = h('div', { class: 'composer' }, notice, ta, h('div', { class: 'row opts' }, ...picks.els, forkLabel, h('span', { class: 'grow spacer' }), send));
+  const chat = h('div', { class: 'chat' }, older, msgs, working, composer);
 
-  view.replaceChildren(head, older, msgs, working, composer);
+  // Chat / Files tabs; Files only when the server has the file browser turned on
+  const files = state.me.files ? filesPanel(id) : null;
+  const chatTab = h('button', { class: 'tab', role: 'tab', onclick: () => { location.hash = `#/s/${id}`; } }, 'Chat');
+  const filesTab = h('button', { class: 'tab', role: 'tab', onclick: () => { location.hash = `#/s/${id}?dir=${encodeURIComponent(files.lastDir())}`; } }, 'Files');
+  const nav = p => {
+    const inFiles = !!files && (p.has('dir') || p.has('file'));
+    chat.hidden = inFiles;
+    if (files) files.el.hidden = !inFiles;
+    chatTab.classList.toggle('on', !inFiles); chatTab.setAttribute('aria-selected', String(!inFiles));
+    filesTab.classList.toggle('on', inFiles); filesTab.setAttribute('aria-selected', String(inFiles));
+    if (inFiles) { files.show(p); scrollTo(0, 0); } else scrollTo(0, document.body.scrollHeight);
+  };
+
+  view.replaceChildren(head, ...(files ? [h('div', { class: 'tabs', role: 'tablist' }, chatTab, filesTab), files.el] : []), chat);
   updateNotice();
+  // moving between Chat, folders and files only changes the query part of the address: the router hands
+  // those changes to nav() instead of rebuilding the page (the chat keeps its stream and scroll)
+  state.sessionNav = { id, nav };
+  state.cleanup.push(() => { state.sessionNav = null; });
+  nav(params);
 
   const setStatus = () => {
     const r = state.runs.get(id);
@@ -506,6 +633,7 @@ async function sessionView(id) {
 
   // initial history (newest part), then live updates
   const t = await api('GET', `/api/sessions/${id}/transcript`);
+  if (stale()) return;
   appendEvents(t.events);
   let start = t.start, end = t.end;
   older.hidden = start <= 0;
@@ -517,7 +645,7 @@ async function sessionView(id) {
     scrollTo(0, document.body.scrollHeight - before);
   };
   if (!t.events.length && t.size === 0) msgs.append(h('div', { class: 'msg system' }, 'Waiting for the session to start…'));
-  scrollTo(0, document.body.scrollHeight);
+  if (!chat.hidden) scrollTo(0, document.body.scrollHeight);
 
   // Live: event stream first; if it hasn't said "ready" within 5s (a proxy is buffering it),
   // fall back to fetching only the new part of the transcript every 2s.
@@ -578,14 +706,17 @@ async function newView(params) {
 // ---------- router ----------
 async function route() {
   if (!state.me) return;
-  for (const fn of state.cleanup.splice(0)) fn(); // close the previous page's streams/timers
-  runListeners = [];
   const [path, query] = location.hash.slice(1).split('?');
   const params = new URLSearchParams(query || '');
   const parts = (path || '/').split('/').filter(Boolean);
+  // same session, other tab/folder/file: let the open session page switch without reloading
+  if (parts[0] === 's' && parts[1] && state.sessionNav?.id === parts[1]) return state.sessionNav.nav(params);
+  for (const fn of state.cleanup.splice(0)) fn(); // close the previous page's streams/timers
+  runListeners = [];
+  state.gen = (state.gen || 0) + 1;
   try {
     if (parts[0] === 'p' && parts[1]) await projectView(decodeURIComponent(parts[1]));
-    else if (parts[0] === 's' && parts[1]) await sessionView(parts[1]);
+    else if (parts[0] === 's' && parts[1]) await sessionView(parts[1], params);
     else if (parts[0] === 'new') await newView(params);
     else await homeView();
   } catch (x) {
@@ -597,6 +728,7 @@ addEventListener('hashchange', route);
 async function boot() {
   try { state.me = await api('GET', '/api/me'); }
   catch { return; }
+  showWhatsApp(state.me.whatsapp);
   optionsReady(); // start fetching the model list early
   connectEvents();
   route();
@@ -615,3 +747,14 @@ window.addEventListener('online', resume);
 window.addEventListener('pageshow', e => { if (e.persisted) resume(); });
 // the server pings every 15s; a stream silent for 45s is dead even if the browser hasn't noticed
 setInterval(() => { if (state.me && !document.hidden && Date.now() - state.esSeen > 45e3) connectEvents(); }, 10e3);
+
+// The server restarted with a new version of this page or of its settings (e.g. the Files tab turned
+// on): reload to pick it up. Not while that would lose typed text or a message on its way; then
+// try again every few seconds.
+const unsent = () => state.writes > 0 || [...document.querySelectorAll('textarea, input[type=text], input[type=search]')].some(e => e.value.trim());
+function checkVersion(v) {
+  if (!v || !state.me?.version || v === state.me.version || state.newVersion) return;
+  state.newVersion = v;
+  const reload = () => { if (unsent()) return false; location.reload(); return true; };
+  if (!reload()) { toast('This page was updated. It reloads once your text is sent or cleared.', 6000); setInterval(reload, 3000); }
+}

@@ -272,3 +272,80 @@ test('answering a question that is already answered is rejected', async () => {
   const a = await req('POST', `/api/sessions/${askId}/answer`, { picks: [1] });
   assert.equal(a.status, 409);
 });
+
+// ---- "Remember me" ----
+test('"Remember me" sets a lasting cookie; a normal sign-in ends with the browser session', async () => {
+  const opts = await req('GET', '/api/login-options');
+  assert.deepEqual(opts.json, { rememberDays: 30 });
+  _resetTotpReplay();
+  const normal = await req('POST', '/api/login', { password: 'test-password-123', code: totpAt(secret, Math.floor(Date.now() / 30000)) });
+  assert.equal(normal.status, 200);
+  assert.doesNotMatch(normal.headers.get('set-cookie'), /Max-Age/);
+  const kept = await req('POST', '/api/login', { password: 'test-password-123', code: totpAt(secret, Math.floor(Date.now() / 30000) + 1), remember: true });
+  assert.equal(kept.status, 200);
+  assert.match(kept.headers.get('set-cookie'), /Max-Age=2592000/);
+  cookie = kept.headers.get('set-cookie').split(';')[0];
+  assert.equal((await req('GET', '/api/me')).status, 200);
+
+  const { SessionStore } = await import('../src/auth.js');
+  const expired = (s, now, c = cfg) => SessionStore.prototype.expired.call({ cfg: c }, s, now);
+  const day = 86400e3, t0 = Date.now();
+  // a remembered login survives two idle weeks, but not 30 days; a normal one ends after a day idle
+  assert.equal(expired({ created: t0, lastSeen: t0, remember: true }, t0 + 14 * day), false);
+  assert.equal(expired({ created: t0, lastSeen: t0, remember: true }, t0 + 31 * day), true);
+  assert.equal(expired({ created: t0, lastSeen: t0 }, t0 + 2 * day), true);
+  // turning the option off (0 days) puts remembered logins back on the normal limits
+  assert.equal(expired({ created: t0, lastSeen: t0, remember: true }, t0 + 2 * day, { ...cfg, rememberDays: 0 }), true);
+});
+
+// ---- Files tab ----
+test('the file browser is off unless HANDOFF_FILE_BROWSER is on', async () => {
+  assert.equal((await req('GET', '/api/me')).json.files, false);
+  const r = await req('GET', `/api/sessions/${desktopId}/files`);
+  assert.equal(r.status, 404);
+  assert.match(r.json.error, /turned off/);
+});
+
+test('with it on: list the session folder, read text, stream images with a sandbox, refuse escapes', async () => {
+  cfg.fileBrowser = true;
+  fs.mkdirSync(path.join(work, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(work, 'src', 'main.ts'), 'export const x = 1;\n');
+  fs.writeFileSync(path.join(work, 'pic.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+  assert.equal((await req('GET', '/api/me')).json.files, true);
+
+  const list = await req('GET', `/api/sessions/${desktopId}/files`);
+  assert.equal(list.status, 200, JSON.stringify(list.json));
+  assert.equal(list.json.entries[0].name, 'src');
+  assert.ok(list.json.entries.some(e => e.name === 'pic.svg' && e.kind === 'image'));
+  assert.deepEqual((await req('GET', `/api/sessions/${desktopId}/files?path=src`)).json.entries.map(e => e.name), ['main.ts']);
+
+  const f = await req('GET', `/api/sessions/${desktopId}/file?path=${encodeURIComponent('src/main.ts')}`);
+  assert.equal(f.json.text, 'export const x = 1;\n');
+
+  const img = await fetch(`${base}/api/sessions/${desktopId}/raw?path=pic.svg`, { headers: { Cookie: cookie } });
+  assert.equal(img.status, 200);
+  assert.equal(img.headers.get('content-type'), 'image/svg+xml');
+  assert.match(img.headers.get('content-security-policy'), /sandbox/);
+  assert.match(img.headers.get('content-security-policy'), /default-src 'none'/);
+  assert.equal((await fetch(`${base}/api/sessions/${desktopId}/raw?path=pic.svg`)).status, 401, 'needs a login');
+  assert.equal((await req('GET', `/api/sessions/${desktopId}/raw?path=src/main.ts`)).status, 415);
+
+  for (const p of ['..', '../data/sessions.json', path.join(tmp, 'data', 'sessions.json')]) {
+    const r = await req('GET', `/api/sessions/${desktopId}/file?path=${encodeURIComponent(p)}`);
+    assert.ok([400, 403, 404].includes(r.status), `${p} -> ${r.status}`);
+  }
+  assert.match(fs.readFileSync(path.join(tmp, 'data', 'audit.log'), 'utf8'), /"action":"file_view".*"path":"src\/main.ts"/);
+  cfg.fileBrowser = false;
+});
+
+// ---- page version: an open page reloads itself when this changes ----
+test('the page version is the same on every route, and changes with the page settings', async () => {
+  const v = (await req('GET', '/api/me')).json.version;
+  assert.match(v, /^[0-9a-f]{16}$/);
+  assert.equal((await sseWait('/api/events', ev => ev === 'hello')).version, v);
+  assert.equal((await req('GET', '/api/live')).json.version, v);
+  cfg.fileBrowser = !cfg.fileBrowser;
+  try { assert.notEqual((await req('GET', '/api/me')).json.version, v); }
+  finally { cfg.fileBrowser = !cfg.fileBrowser; }
+  assert.equal((await req('GET', '/api/me')).json.version, v);
+});

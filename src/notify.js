@@ -8,7 +8,7 @@ const PER_SESSION_GAP = 20e3;   // same kind of message for one session at most 
 const MAX_PER_MINUTE = 12;
 
 export class Notifier {
-  constructor(cfg, { store, runner, log = console.log, send, onAnswer, onApproval } = {}) {
+  constructor(cfg, { store, runner, log = console.log, send, onAnswer, onApproval, onLinkChange } = {}) {
     this.cfg = cfg;
     this.store = store;
     this.runner = runner;
@@ -16,6 +16,9 @@ export class Notifier {
     this.send = send || (text => this.sendWhatsApp(text));
     this.onAnswer = onAnswer;     // (sessionId, {picks, text}) -> Promise
     this.onApproval = onApproval; // (permId, allow) -> boolean
+    this.onLinkChange = onLinkChange; // (linkState()) -> void, when the sender starts or stops being able to send
+    this.problem = undefined;     // null = sender connected; 'unlinked' | 'offline' | 'not-running'; undefined = not checked yet
+    this.seenProblem = null;
     this.last = new Map();   // `${sessionId}:${kind}` -> time
     this.sent = [];          // timestamps for the global rate limit
     this.seen = null;        // sessionId -> status, from the previous registry scan
@@ -45,11 +48,45 @@ export class Notifier {
     this.timer.unref?.();
     this.inbox = setInterval(() => this.pollInbox().catch(() => {}), 4000);
     this.inbox.unref?.();
+    this.linkTimer = setInterval(() => this.checkLink(), 30e3);
+    this.linkTimer.unref?.();
     this.scan();
+    this.checkLink();
     this.log(`[notify] WhatsApp notifications on -> +${this.cfg.notify.to}`);
     return this;
   }
-  stop() { clearInterval(this.timer); clearInterval(this.inbox); }
+  stop() { clearInterval(this.timer); clearInterval(this.inbox); clearInterval(this.linkTimer); }
+
+  // Can the sender deliver right now? Without this, an unlinked phone fails silently for days.
+  linkState() {
+    if (!this.on) return { enabled: false };
+    return { enabled: true, connected: this.problem === null, problem: this.problem || null, qrUrl: `${this.cfg.notify.url}/qr` };
+  }
+
+  async checkLink() {
+    if (!this.on) return;
+    let next;
+    try {
+      const d = await (await fetch(`${this.cfg.notify.url}/status`, { signal: AbortSignal.timeout(4000) })).json();
+      next = d.connected ? null : d.waitingForScan ? 'unlinked' : 'offline';
+    } catch { next = 'not-running'; }
+    // A sender that is restarting or reconnecting is fine: other problems count once seen twice in a row
+    // (30s apart). An unlinked phone counts at once.
+    const confirmed = !next || next === 'unlinked' || next === this.seenProblem;
+    this.seenProblem = next;
+    if (confirmed) this.setProblem(next);
+  }
+
+  setProblem(next) {
+    if (next === this.problem) return;
+    const before = this.problem;
+    this.problem = next;
+    if (next === 'unlinked') this.log(`[notify] WhatsApp alerts paused: the sending phone is unlinked. Scan the QR at ${this.cfg.notify.url}/qr`);
+    else if (next === 'offline') this.log('[notify] WhatsApp alerts paused: the sender can\'t reach WhatsApp');
+    else if (next === 'not-running') this.log(`[notify] WhatsApp alerts paused: the sender at ${this.cfg.notify.url} isn't running`);
+    else if (before) this.log('[notify] WhatsApp sender connected again');
+    this.onLinkChange?.(this.linkState());
+  }
 
   // compare the session registry with the previous scan
   scan() {
@@ -174,6 +211,7 @@ export class Notifier {
       body: JSON.stringify({ to: this.cfg.notify.to, text })
     });
     if (!r.ok) throw new Error(`${r.status} ${(await r.json().catch(() => ({}))).error || ''}`.trim());
+    if (this.problem) this.setProblem(null); // it just delivered, so it's fine again
   }
 
   async status() {

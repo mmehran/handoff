@@ -74,7 +74,9 @@ Compose reads `HANDOFF_WHATSAPP_TOKEN` and `HANDOFF_WHATSAPP_TO` from the same `
 
 ### 4. Link the sending phone
 
-Open **http://127.0.0.1:7870/qr** on the computer. On the **sending** phone, go to WhatsApp → **Settings** → **Linked devices** → **Link a device**, and scan the code. The page switches to "Linked". The keys are kept in the Docker volume `wa-auth`, so this is a one-time step.
+Open **http://127.0.0.1:7870/qr** on the computer. On the **sending** phone, go to WhatsApp → **Settings** → **Linked devices** → **Link a device**, and scan the code. The page switches to "Linked". The keys are kept in the Docker volume `wa-auth`, so you normally do this once.
+
+WhatsApp can still log a linked device out, for example if it's removed on the phone or the phone is offline for a long time. The sender then deletes its keys and waits for a new scan. Handoff checks the sender every 30 seconds. While alerts can't be delivered, the web app shows a warning at the top of every page, and the log says why. Scan the code again to fix it.
 
 ### 5. Restart Handoff and test
 
@@ -105,7 +107,9 @@ Restart `npm start`. The log shows `[notify] WhatsApp notifications on -> +15551
 | Problem | Fix |
 |---|---|
 | `required variable HANDOFF_WHATSAPP_TOKEN is missing a value` | Run `npm run setup:whatsapp` first, and run compose from the Handoff folder. |
-| "WhatsApp service not running" in the app | `docker compose ps`; start it with `docker compose up -d`. |
+| Warning "the sending phone got unlinked" | WhatsApp logged the sender out. Open http://127.0.0.1:7870/qr on the computer and scan it again with the sending phone. The warning goes away within 30 s. |
+| Warning "the WhatsApp sender isn't running", or "WhatsApp service not running" | `docker compose ps`; start it with `docker compose up -d`. |
+| Warning "the sender can't reach WhatsApp" | The computer is offline or WhatsApp is unreachable. It reconnects by itself. |
 | QR page keeps changing | That's normal. A new code appears every ~20 s until it's scanned. |
 | Nothing arrives | Check `docker logs handoff-whatsapp`. Is the sending phone online? Is `HANDOFF_WHATSAPP_TO` correct, with country code? |
 | `WA_TOKEN missing or too short` in the container log | The token in `.env` must be 24+ characters. Re-run `npm run setup:whatsapp`. |

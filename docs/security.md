@@ -14,7 +14,7 @@ Handoff gives remote access to a machine that can run code. Anyone who signs in 
 - **TOTP 2FA** (RFC 6238) works with any authenticator app. Each code is accepted once (replay protection).
 - **Throttling:** 5 failures per IP per 15 minutes, plus a global lock after 20 failures to stop attacks from rotating IPs. Failed attempts also get a random delay.
 - The password and the 2FA code are always both checked, so the response time doesn't reveal which one was wrong.
-- **Session cookie:** a random 256-bit token, sent as `HttpOnly; Secure; SameSite=Strict`. Only its SHA-256 is stored, in `data/sessions.json`. It expires after 24 h idle or 7 days at most, and both are configurable.
+- **Session cookie:** a random 256-bit token, sent as `HttpOnly; Secure; SameSite=Strict`. Only its SHA-256 is stored, in `data/sessions.json`. It expires after 24 h idle or 7 days at most, and both are configurable. Without **Remember me** the cookie also ends when the browser closes. With it, the cookie lasts `HANDOFF_REMEMBER_DAYS` (30 by default) whether or not the device is used, so only tick it on your own devices.
 - **Sign out all devices** is in the ⋮ menu. Re-running `npm run setup` also signs out every device.
 
 ## Web app
@@ -33,6 +33,18 @@ Handoff gives remote access to a machine that can run code. Anyone who signs in 
 - Handoff **reads** Claude Code's files and never changes Claude settings or rewrites transcripts.
 - Secrets from `.env` are not passed to the `claude` processes Handoff starts, and `HANDOFF_*` variables are stripped from their environment.
 
+## Files tab
+
+Off by default. With `HANDOFF_FILE_BROWSER=true`, every session gets a read-only **Files** tab for its project folder.
+
+- Anyone signed in can read **every file in that folder**, `.env` files included. That's no more than they could already ask Claude to show them, but only turn it on if that's fine for you.
+- Paths are resolved with symlinks and junctions followed, so nothing outside the session's folder can be listed or opened. Links that point outside it are left out of the listing.
+- Handoff's own `.env` and `data/` folder, Claude Code's `~/.claude/.credentials.json` and the session inbox tokens are never shown, even when a session runs in a folder that contains them.
+- Nothing can be changed, uploaded or deleted. Text is shown up to 1 MB and images up to 20 MB. Videos and binary files are listed but can't be opened.
+- Images are served with `Content-Security-Policy: default-src 'none'; sandbox`, so an SVG opened on its own can't run scripts on the site.
+- Every file opened is recorded in the audit log (`file_view`).
+- `HANDOFF_ALLOWED_ROOTS` limits the Files tab too.
+
 ## Secrets at rest
 
 | Secret | Where | If it leaks |
@@ -47,7 +59,7 @@ Handoff gives remote access to a machine that can run code. Anyone who signs in 
 
 ## Audit log
 
-`data/audit.log` records sign-ins (successful, failed and blocked), prompts sent, approvals, interrupts, stops and WhatsApp tests, with the client IP from Cloudflare's `CF-Connecting-IP` header.
+`data/audit.log` records sign-ins (successful, failed and blocked, and whether Remember me was ticked), prompts sent, approvals, interrupts, stops, files opened in the Files tab and WhatsApp tests, with the client IP from Cloudflare's `CF-Connecting-IP` header.
 
 ## Reporting a vulnerability
 

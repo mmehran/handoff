@@ -61,6 +61,8 @@ export function loadConfig() {
     totpEnabled: !!totpSecret,
     sessionIdleHours: num('HANDOFF_LOGIN_IDLE_HOURS', 24),
     sessionMaxDays: num('HANDOFF_LOGIN_MAX_DAYS', 7),
+    rememberDays: num('HANDOFF_REMEMBER_DAYS', 30), // "Remember me" sign-ins last this long; 0 hides the option
+    fileBrowser: bool('HANDOFF_FILE_BROWSER'),       // read-only Files tab in every session
     defaultPermissionMode: str('HANDOFF_DEFAULT_MODE', 'manual'),
     allowBypassPermissions: bool('HANDOFF_ALLOW_BYPASS'),
     allowedRoots: list('HANDOFF_ALLOWED_ROOTS', path.delimiter).map(p => path.resolve(p)), // empty = any folder

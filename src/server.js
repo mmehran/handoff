@@ -2,12 +2,13 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { ROOT, DATA_DIR } from './config.js';
+import { ROOT, DATA_DIR, ENV_FILE } from './config.js';
 import { verifyPassword, verifyTotp, SessionStore, LoginLimiter } from './auth.js';
 import { Store, tailFile, normalize, UUID_RE } from './store.js';
 import { Runner, httpErr } from './runner.js';
 import { injectMessage } from './inbox.js';
 import { Notifier, buildAnswer } from './notify.js';
+import { FileBrowser } from './files.js';
 
 const PUBLIC = path.join(ROOT, 'public');
 const COOKIE = 'handoff_sid';
@@ -50,7 +51,9 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
     store, runner, log,
     // replies typed on WhatsApp take the same path as taps in the web UI
     onAnswer: (sessionId, pick) => answerQuestion(sessionId, pick, 'whatsapp'),
-    onApproval: (permId, allow) => runner.decide(permId, { allow, message: 'Denied from WhatsApp' })
+    onApproval: (permId, allow) => runner.decide(permId, { allow, message: 'Denied from WhatsApp' }),
+    // open pages show a warning while WhatsApp alerts can't be delivered
+    onLinkChange: s => broadcast('whatsapp', s)
   }).start();
   route('GET', /^\/api\/notify$/, async (req, res) => json(res, 200, await notifier.status()));
   route('POST', /^\/api\/notify\/test$/, async (req, res, ctx) => {
@@ -77,11 +80,16 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
       return json(res, 401, { error: 'Invalid credentials' });
     }
     limiter.success(ctx.ip);
-    const token = sessions.create(ctx.ip, req.headers['user-agent']);
-    audit(ctx.ip, 'login_ok', { ua: String(req.headers['user-agent'] || '').slice(0, 120) });
-    res.setHeader('Set-Cookie', `${COOKIE}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${cfg.sessionMaxDays * 86400}`);
+    const remember = body.remember === true && cfg.rememberDays > 0;
+    const token = sessions.create(ctx.ip, req.headers['user-agent'], { remember });
+    audit(ctx.ip, 'login_ok', { remember, ua: String(req.headers['user-agent'] || '').slice(0, 120) });
+    // "Remember me": a cookie that survives closing the browser. Otherwise it ends with the browser session.
+    res.setHeader('Set-Cookie', `${COOKIE}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/${remember ? `; Max-Age=${Math.round(cfg.rememberDays * 86400)}` : ''}`);
     json(res, 200, { ok: true });
   }, { public: true });
+
+  // what the sign-in page offers (before anyone is signed in)
+  route('GET', /^\/api\/login-options$/, (req, res) => json(res, 200, { rememberDays: cfg.rememberDays > 0 ? cfg.rememberDays : 0 }), { public: true });
 
   route('POST', /^\/api\/logout$/, (req, res, ctx) => {
     sessions.destroy(ctx.token);
@@ -94,9 +102,15 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
     json(res, 200, { ok: true });
   });
 
-  route('GET', /^\/api\/me$/, (req, res) => json(res, 200, {
-    ok: true, totp: cfg.totpEnabled, allowBypass: cfg.allowBypassPermissions, defaultMode: runner.normalizeMode(cfg.defaultPermissionMode), logins: sessions.list().length
-  }));
+  // The settings the page is built with. `version` covers them and the page's own files: an open page
+  // that reconnects and gets a different one (the server restarted with an update) reloads itself.
+  const pageSettings = () => ({ totp: cfg.totpEnabled, allowBypass: cfg.allowBypassPermissions, defaultMode: runner.normalizeMode(cfg.defaultPermissionMode), files: !!cfg.fileBrowser });
+  const pageFiles = crypto.createHash('sha256');
+  for (const f of fs.readdirSync(PUBLIC, { withFileTypes: true }).filter(f => f.isFile()).map(f => f.name).sort()) pageFiles.update(f).update(fs.readFileSync(path.join(PUBLIC, f)));
+  const filesHash = pageFiles.digest('hex');
+  const pageVersion = () => crypto.createHash('sha256').update(filesHash + JSON.stringify(pageSettings())).digest('hex').slice(0, 16);
+
+  route('GET', /^\/api\/me$/, (req, res) => json(res, 200, { ok: true, ...pageSettings(), logins: sessions.list().length, version: pageVersion(), whatsapp: notifier.linkState() }));
 
   // ---------- browsing (read-only) ----------
   route('GET', /^\/api\/projects$/, (req, res) => json(res, 200, store.listProjects()));
@@ -114,7 +128,7 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
     const ours = new Set(runs.map(r => r.sessionId));
     const others = live.filter(l => !ours.has(l.sessionId));
     for (const l of others) if (l.status === 'waiting') l.question = store.pendingQuestion(l.sessionId) || null;
-    json(res, 200, { live: others, runs, permissions: runner.pendingPermissions() });
+    json(res, 200, { live: others, runs, permissions: runner.pendingPermissions(), version: pageVersion(), whatsapp: notifier.linkState() });
   });
 
   route('GET', /^\/api\/sessions\/([0-9a-f-]{36})$/, (req, res, ctx, m) => {
@@ -167,6 +181,37 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
     req.on('close', () => { stop?.(); clearInterval(hb); if (waiter) clearInterval(waiter); runner.off('message', onRunnerMsg); });
   });
 
+  // ---------- files in the session's folder (optional, read-only) ----------
+  // Never shown: Handoff's own secrets, Claude Code's login, and the session inbox tokens.
+  const files = new FileBrowser({
+    deny: [ENV_FILE, DATA_DIR, path.join(cfg.claudeHome, '.credentials.json'), path.join(cfg.claudeHome, 'sessions')],
+    allowedRoots: cfg.allowedRoots
+  });
+  const sessionFolder = id => {
+    if (!cfg.fileBrowser) throw httpErr(404, 'the file browser is turned off (HANDOFF_FILE_BROWSER)');
+    const cwd = store.sessionInfo(id)?.cwd || runner.bySession(id)?.cwd;
+    if (!cwd) throw httpErr(404, 'session not found');
+    return cwd;
+  };
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/files$/, (req, res, ctx, m) => {
+    json(res, 200, files.list(sessionFolder(m[1]), ctx.url.searchParams.get('path')));
+  });
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/file$/, (req, res, ctx, m) => {
+    const f = files.read(sessionFolder(m[1]), ctx.url.searchParams.get('path'));
+    audit(ctx.ip, 'file_view', { sessionId: m[1], path: f.path });
+    json(res, 200, f);
+  });
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/raw$/, (req, res, ctx, m) => {
+    const f = files.image(sessionFolder(m[1]), ctx.url.searchParams.get('path'));
+    res.writeHead(200, {
+      'Content-Type': f.type, 'Content-Length': f.size, 'Cache-Control': 'private, no-store',
+      // an SVG opened on its own must not be able to run scripts on this site
+      'Content-Security-Policy': "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox",
+      'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(f.name)}`
+    });
+    fs.createReadStream(f.abs).on('error', () => res.destroy()).pipe(res);
+  });
+
   // polling fallback for networks/proxies that buffer event streams
   route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/since$/, (req, res, ctx, m) => {
     json(res, 200, store.readSince(m[1], Number(ctx.url.searchParams.get('from'))));
@@ -181,7 +226,7 @@ export function createServer(cfg, { claudePath, log = console.log } = {}) {
   route('GET', /^\/api\/events$/, (req, res) => {
     sse(res);
     globalClients.add(res);
-    res.write(`event: hello\ndata: ${JSON.stringify({ runs: runner.list(), permissions: runner.pendingPermissions() })}\n\n`);
+    res.write(`event: hello\ndata: ${JSON.stringify({ runs: runner.list(), permissions: runner.pendingPermissions(), version: pageVersion(), whatsapp: notifier.linkState() })}\n\n`);
     const hb = setInterval(() => res.write('event: ping\ndata: 1\n\n'), 15e3); // an event (not a comment) so the page can see it
     req.on('close', () => { globalClients.delete(res); clearInterval(hb); });
   });

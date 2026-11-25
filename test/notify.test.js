@@ -127,3 +127,56 @@ test('yes / no answer a pending tool approval', async () => {
   assert.deepEqual(approvals.at(-1), { id: 'p2', allow: false });
   n.stop();
 });
+
+test('link check: an unlinked phone is reported at once, other problems only when seen twice', async () => {
+  const http = await import('node:http');
+  let status = { connected: true };
+  const sender = http.createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(status)); });
+  await new Promise(r => sender.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${sender.address().port}`;
+  const changes = [], logs = [];
+  const n = new Notifier({ notify: { enabled: true, token: 't'.repeat(30), to: '15551234567', url } },
+    { store: {}, runner: new EventEmitter(), log: l => logs.push(l), send: async () => {}, onLinkChange: s => changes.push(s.problem) });
+  try {
+    await n.checkLink();
+    assert.deepEqual(n.linkState(), { enabled: true, connected: true, problem: null, qrUrl: `${url}/qr` });
+
+    status = { connected: false, waitingForScan: true };            // logged out: say so right away
+    await n.checkLink();
+    assert.equal(n.linkState().problem, 'unlinked');
+    assert.match(logs.at(-1), /unlinked\. Scan the QR at http:\/\/127\.0\.0\.1:\d+\/qr/);
+
+    status = { connected: true };
+    await n.checkLink();
+    assert.equal(n.linkState().connected, true);
+    assert.match(logs.at(-1), /connected again/);
+
+    status = { connected: false, waitingForScan: false };           // reconnecting: fine once...
+    await n.checkLink();
+    assert.equal(n.linkState().connected, true);
+    await n.checkLink();                                             // ...still down 30s later: a problem
+    assert.equal(n.linkState().problem, 'offline');
+
+    await new Promise(r => sender.close(r));                         // container stopped
+    await n.checkLink();
+    assert.equal(n.linkState().problem, 'offline', 'one failed check is not enough');
+    await n.checkLink();
+    assert.equal(n.linkState().problem, 'not-running');
+    assert.deepEqual(changes, [null, 'unlinked', null, 'offline', 'not-running']);
+  } finally { sender.close(); n.stop(); }
+});
+
+test('link check: off when WhatsApp is not set up; a delivered message clears a problem', async () => {
+  const off = new Notifier({ notify: { enabled: false } }, { store: {}, runner: new EventEmitter(), log: () => {} });
+  assert.deepEqual(off.linkState(), { enabled: false });
+  const { n } = setup();
+  const changes = [];
+  n.onLinkChange = s => changes.push(s.problem);
+  n.setProblem('unlinked');
+  n.cfg.notify.url = 'http://127.0.0.1:9';
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({}) }); // the sender accepted the message
+  try { await n.sendWhatsApp('hi'); } finally { globalThis.fetch = realFetch; }
+  assert.equal(n.linkState().connected, true);
+  assert.deepEqual(changes, ['unlinked', null]);
+});

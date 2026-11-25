@@ -17,6 +17,8 @@ It's a small Node.js server with no npm dependencies. It listens on `127.0.0.1` 
 - **Same choices as Claude Desktop.** The model list comes from your installed Claude Code, with each model's effort levels and the permission modes (Ask, Accept edits, Plan, Auto; Bypass only if you allow it).
 - **Approve tools from your phone.** Requests like "Allow Bash: npm test?" pop up with Allow and Deny buttons.
 - **Answer Claude's questions.** When Claude asks a multiple-choice question, you see the options and tap one.
+- **Browse the project's files (optional).** A Files tab in every session shows its folder, and you can open code, text and images right on your phone. It's read-only, and off until you set `HANDOFF_FILE_BROWSER=true`.
+- **Remember me.** Tick it when you sign in on your own phone and it stays signed in for 30 days.
 - **WhatsApp alerts (optional).** Get a message when a session needs approval, asks a question, is waiting, finishes or fails. Reply `yes`/`no` or an option number to answer straight from WhatsApp. This uses a self-hosted sender built on the open-source [Baileys](https://github.com/WhiskeySockets/Baileys) library, so there's no paid API.
 - **Works on a phone.** The layout is responsive and touch-friendly, and you can install it to the home screen as a PWA.
 
