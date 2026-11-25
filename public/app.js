@@ -1076,6 +1076,70 @@ function changesPanel(id) {
   return { el, show };
 }
 
+// ---------- overview: what a session has done (from GET /api/sessions/:id/activity) ----------
+const duration = ms => {
+  const m = Math.round(ms / 60000);
+  if (m < 1) return 'under a minute';
+  if (m < 60) return `${m} min`;
+  const hrs = Math.floor(m / 60);
+  return hrs < 48 ? `${hrs} h ${m % 60} min` : `${Math.round(hrs / 24)} days`;
+};
+function overviewPanel(id, { getActivity, inProject }) {
+  const el = h('div', { class: 'overview' });
+  const section = (title, count, ...kids) => h('section', { class: 'ov-section' }, h('h2', {}, title, count != null ? h('span', { class: 'ov-count' }, String(count)) : null), ...kids);
+  const render = () => {
+    const a = getActivity();
+    if (a.loading) return el.replaceChildren(h('div', { class: 'muted small' }, 'Loading…'));
+    const stat = (n, label) => h('div', { class: 'ov-stat' }, h('b', {}, String(n)), h('span', {}, label));
+    const files = a.files.map(x => {
+      const rel = inProject(x.path), inside = rel !== x.path;
+      const label = [h('span', { class: 'ficon' }, x.tool === 'Write' ? '📝' : '✏️'), h('span', { class: 'fname mono' }, rel), h('span', { class: 'fmeta' }, `${x.changes}× · ${ago(x.last)}`)];
+      return state.me.files && inside ? h('a', { class: 'frow', href: `#/s/${id}?file=${encodeURIComponent(rel.replace(/\\/g, '/'))}` }, ...label) : h('div', { class: 'frow' }, ...label);
+    });
+    const commands = a.commands.map(c => h('div', { class: 'ov-cmd' },
+      h('span', { class: 'ov-ok ' + (c.ok === false ? 'bad' : c.ok ? 'good' : ''), title: c.ok === false ? 'Failed' : c.ok ? 'Succeeded' : 'Running or no result' }, c.ok === false ? '✗' : c.ok ? '✓' : '…'),
+      h('div', { class: 'grow' }, c.description ? h('div', { class: 'small' }, c.description) : null, h('code', { class: 'ov-cmdline' }, c.command)),
+      h('span', { class: 'fmeta' }, ago(c.ts))));
+    const agents = a.agents.map(x => h('div', { class: 'frow ov-agent', 'data-tool-use': x.toolUseId },
+      h('span', { class: 'ficon' }, '🤖'),
+      h('span', { class: 'fname' }, x.description || x.type, h('span', { class: 'small muted' }, ' · ' + x.type)),
+      h('span', { class: 'chip ' + ({ done: 'idle', failed: 'error', running: 'running', background: 'running' }[x.status] || '') }, x.status === 'background' ? 'running' : x.status)));
+    const todo = { completed: '✓', in_progress: '◐', pending: '○' };
+    el.replaceChildren(...[
+      h('div', { class: 'ov-stats' },
+        stat(a.first ? duration(a.last - a.first) : '–', a.first ? `since ${new Date(a.first).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : 'time'),
+        stat(a.prompts, a.prompts === 1 ? 'message from you' : 'messages from you'),
+        stat(a.tools, a.tools === 1 ? 'tool call' : 'tool calls'),
+        stat(a.files.length, a.files.length === 1 ? 'file changed' : 'files changed'),
+        stat(a.commandCount, a.commandCount === 1 ? 'command' : 'commands')),
+      a.plan && section('Plan', null, h('details', { class: 'tool ov-plan' }, h('summary', {}, h('b', {}, { approved: '✓ Approved', rejected: '↩ Sent back', pending: '… Waiting for approval' }[a.plan.status]), ' · ', ago(a.plan.ts)),
+        h('div', { class: 'msg assistant plan-text' }, md(a.plan.text)))),
+      a.todos.length && section('To-do list', `${a.todos.filter(x => x.status === 'completed').length}/${a.todos.length}`,
+        h('ol', { class: 'todo-list ov-todos' }, ...a.todos.map(x => h('li', { class: x.status }, h('span', { class: 'todo-mark' }, todo[x.status] || '○'), h('span', {}, x.subject))))),
+      section('Files changed', a.files.length, files.length ? h('div', { class: 'flist' }, ...files) : h('div', { class: 'empty' }, 'No files changed in this chat.')),
+      section('Commands run', a.commandCount, commands.length ? h('div', { class: 'flist ov-cmds' }, ...commands) : h('div', { class: 'empty' }, 'No commands run in this chat.'),
+        a.commandCount > commands.length ? h('div', { class: 'small muted' }, `The latest ${commands.length} are shown.`) : null),
+      agents.length && section('Sub-agents', agents.length, h('div', { class: 'flist' }, ...agents))
+    ].filter(Boolean));
+  };
+  return { el, render };
+}
+
+// ---------- quick replies: one tap sends a common answer; the list can be edited ----------
+const QUICK_DEFAULT = ['Continue', 'Yes, go ahead', 'Run the tests', 'Explain that more simply', 'Summarize what you did'];
+function editQuickReplies(onSave) {
+  const box = h('textarea', { rows: '7', 'aria-label': 'Quick replies, one per line' });
+  box.value = store.get('quickReplies', QUICK_DEFAULT).join('\n');
+  const close = openSheet('Quick replies',
+    h('div', { class: 'small muted' }, 'One per line. Tapping one sends it to Claude straight away.'), box,
+    h('div', { class: 'row' },
+      h('button', { class: 'btn ghost', onclick: () => { box.value = QUICK_DEFAULT.join('\n'); } }, 'Reset'), h('span', { class: 'grow' }),
+      h('button', { class: 'btn primary', onclick: () => {
+        store.set('quickReplies', box.value.split('\n').map(s => s.trim()).filter(Boolean).slice(0, 12));
+        close(); onSave();
+      } }, 'Save')));
+}
+
 async function sessionView(id, params = new URLSearchParams()) {
   setTop('Session', '#/');
   const gen = state.gen, stale = () => gen !== state.gen; // the user went elsewhere while this was loading
@@ -1128,7 +1192,7 @@ async function sessionView(id, params = new URLSearchParams()) {
   const todoBox = h('details', { class: 'todos', hidden: true });
   todoBox.open = store.get('todosOpen', false);
   todoBox.addEventListener('toggle', () => store.set('todosOpen', todoBox.open));
-  let activity = { todos: [] };
+  let activity = { todos: [], plan: null, files: [], commands: [], commandCount: 0, agents: [], tools: 0, prompts: 0, first: 0, last: 0, loading: true };
   const renderTodos = list => {
     todoBox.hidden = !list.length;
     if (!list.length) return todoBox.replaceChildren();
@@ -1300,7 +1364,7 @@ async function sessionView(id, params = new URLSearchParams()) {
     const el = h('div', { class: 'msg user pending' }, text, images.length ? h('div', { class: 'thumbs' }, ...photos.previews().map(src => h('img', { src, alt: 'Photo' }))) : null, h('div', { class: 'via' }, 'sending…'));
     const p = { text, el, photos: images.length > 0 };
     pending.push(p); msgs.append(el); scrollTo(0, document.body.scrollHeight);
-    ta.value = ''; ta.style.height = ''; photos.clear();
+    ta.value = ''; ta.style.height = ''; photos.clear(); updateQuick();
     try {
       const body = { text, images, fork: forkBox.checked, ...(isLive() ? {} : picks.values()) };
       const r = await api('POST', `/api/sessions/${id}/message`, body);
@@ -1317,7 +1381,16 @@ async function sessionView(id, params = new URLSearchParams()) {
   send.addEventListener('click', doSend);
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doSend(); } });
   ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, innerHeight * 0.4) + 'px'; });
-  const composer = h('div', { class: 'composer' }, notice, photos.strip, photos.input,
+  const quick = h('div', { class: 'quick', role: 'toolbar', 'aria-label': 'Quick replies' });
+  const renderQuick = () => quick.replaceChildren(...store.get('quickReplies', QUICK_DEFAULT).map(q =>
+    h('button', { class: 'chip-btn', type: 'button', onclick: () => { if (send.disabled) return; ta.value = q; doSend(); } }, q)),
+    h('button', { class: 'chip-btn edit', type: 'button', title: 'Edit quick replies', 'aria-label': 'Edit quick replies', onclick: () => editQuickReplies(renderQuick) }, '✎'));
+  // only while Claude is waiting for you and the box is empty: never mid-run, never over your own text
+  let idleNow = true;
+  const updateQuick = () => { quick.hidden = !idleNow || !!ta.value.trim() || !!info.question; };
+  renderQuick();
+  ta.addEventListener('input', updateQuick);
+  const composer = h('div', { class: 'composer' }, notice, quick, photos.strip, photos.input,
     h('div', { class: 'input-row' }, photos.button, ta, send),
     h('div', { class: 'opts' }, ...picks.els, forkLabel));
   const chat = h('div', { class: 'chat' }, findPanel, older, msgs, working, jump, composer);
@@ -1328,20 +1401,28 @@ async function sessionView(id, params = new URLSearchParams()) {
   const chatTab = h('button', { class: 'tab', role: 'tab', onclick: () => { location.hash = `#/s/${id}`; } }, 'Chat');
   const filesTab = h('button', { class: 'tab', role: 'tab', onclick: () => { location.hash = `#/s/${id}?dir=${encodeURIComponent(files.lastDir())}`; } }, 'Files');
   const changesTab = h('button', { class: 'tab', role: 'tab', onclick: () => { location.hash = `#/s/${id}?changes=`; } }, 'Changes');
+  const overview = overviewPanel(id, { getActivity: () => activity, inProject });
+  const overviewTab = h('button', { class: 'tab', role: 'tab', onclick: () => { location.hash = `#/s/${id}?overview=`; } }, 'Overview');
+  const onActivity = () => { if (!overview.el.hidden) overview.render(); };
+  window.addEventListener('handoff-activity', onActivity);
+  state.cleanup.push(() => window.removeEventListener('handoff-activity', onActivity));
   const nav = p => {
-    const tab = files && (p.has('dir') || p.has('file')) ? 'files' : changes && (p.has('changes') || p.has('diff')) ? 'changes' : 'chat';
+    const tab = p.has('overview') ? 'overview' : files && (p.has('dir') || p.has('file')) ? 'files' : changes && (p.has('changes') || p.has('diff')) ? 'changes' : 'chat';
     chat.hidden = tab !== 'chat';
     if (chat.hidden) jump.hidden = true;
+    overview.el.hidden = tab !== 'overview';
+    todoBox.classList.toggle('away', tab === 'overview'); // the overview lists the to-dos itself
     if (files) { files.el.hidden = tab !== 'files'; changes.el.hidden = tab !== 'changes'; }
-    for (const [name, b] of [['chat', chatTab], ['files', filesTab], ['changes', changesTab]]) { b.classList.toggle('on', tab === name); b.setAttribute('aria-selected', String(tab === name)); }
-    if (tab === 'files') { files.show(p); scrollTo(0, 0); }
+    for (const [name, b] of [['chat', chatTab], ['overview', overviewTab], ['files', filesTab], ['changes', changesTab]]) { b.classList.toggle('on', tab === name); b.setAttribute('aria-selected', String(tab === name)); }
+    if (tab === 'overview') { overview.render(); loadActivity(); scrollTo(0, 0); }
+    else if (tab === 'files') { files.show(p); scrollTo(0, 0); }
     else if (tab === 'changes') { changes.show(p); scrollTo(0, 0); }
     else if (p.has('find') && state.me.search) { openFind(p.get('find')); scrollTo(0, 0); }
     else scrollTo(0, document.body.scrollHeight);
   };
 
-  if (files) head.append(h('div', { class: 'tabs', role: 'tablist' }, chatTab, filesTab, changesTab));
-  view.replaceChildren(head, ...(files ? [files.el, changes.el] : []), chat);
+  head.append(h('div', { class: 'tabs', role: 'tablist' }, chatTab, overviewTab, ...(files ? [filesTab, changesTab] : [])));
+  view.replaceChildren(head, overview.el, ...(files ? [files.el, changes.el] : []), chat);
   updateNotice();
   // moving between Chat, folders and files only changes the query part of the address: the router hands
   // those changes to nav() instead of rebuilding the page (the chat keeps its stream and scroll)
@@ -1358,6 +1439,7 @@ async function sessionView(id, params = new URLSearchParams()) {
     status.className = `chip ${st}`;
     stopBtn.hidden = !r; intBtn.hidden = !r || r.status === 'idle';
     working.hidden = !['running', 'busy', 'waiting', 'starting'].includes(st);
+    idleNow = working.hidden; updateQuick();
     working.lastChild.textContent = st === 'waiting' ? 'Waiting for your approval…' : 'Claude is working…';
     settings.textContent = r ? [r.model && r.model !== 'default' ? r.model : 'default model', r.effort ? `${EFFORT_LABELS[r.effort] || r.effort} effort` : null, MODE_LABELS[r.mode] || r.mode].filter(Boolean).join(' · ') : '';
     settings.hidden = !r;
