@@ -52,6 +52,7 @@ API keys aren't settings: make them with `node scripts/api-key.js create --name 
 |---|---|---|
 | `HANDOFF_TUNNEL` | `none` (`.env.example` sets `quick`) | `none`, `quick` (Cloudflare quick tunnel, random URL), `cloudflare` (your own domain), or `ngrok`. `npm run start:local` ignores it. |
 | `HANDOFF_PUBLIC_HOSTNAME` | empty | Your hostname, e.g. `claude.example.com`. Used for the named tunnel and for links in WhatsApp messages. |
+| `HANDOFF_PREVIEW_HOSTNAME` | empty | The [App preview](preview.md)'s own hostname on the same tunnel, e.g. `preview.example.com`. Set by `npm run setup:domain -- --preview <hostname>`. Empty turns the preview off. |
 | `HANDOFF_CLOUDFLARE_TUNNEL_TOKEN` | empty | Run token of the named tunnel. Written by `npm run setup:domain`. |
 | `HANDOFF_TUNNEL_PROTOCOL` | `auto` | How `cloudflared` connects: `auto` (QUIC, switching to HTTP/2 for 6 hours when QUIC keeps failing, as it can on VPNs or strict networks), `quic` or `http2`. |
 

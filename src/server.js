@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { createCore } from './core.js';
 import { createWeb } from './web.js';
 import { createApi, API_PREFIX } from './api.js';
+import { Preview } from './preview.js';
 import { UUID_RE } from './store.js';
 import { json } from './http-util.js';
 
@@ -21,7 +22,9 @@ const SECURITY_HEADERS = {
 };
 
 export function createServer(cfg, { claudePath, log = console.log, core = createCore(cfg, { claudePath, log }) } = {}) {
-  const web = cfg.web ? createWeb(core, { log }) : null;
+  // App preview: a second hostname whose every request goes to a dev server on this computer
+  const preview = cfg.web ? new Preview(cfg, { log }) : null;
+  const web = cfg.web ? createWeb(core, { log, preview }) : null;
   // the API is always there to answer (with "api_off" while HANDOFF_API is off), so the web app can
   // turn it on without a restart
   const api = createApi(core, { log });
@@ -29,6 +32,8 @@ export function createServer(cfg, { claudePath, log = console.log, core = create
   const healthId = crypto.randomBytes(8).toString('hex');
 
   const server = http.createServer(async (req, res) => {
+    // the previewed app sets its own headers: Handoff's strict ones would break it
+    if (preview?.isPreviewHost(req)) return preview.handle(req, res);
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
     const url = new URL(req.url, 'http://x');
     try {
@@ -44,8 +49,14 @@ export function createServer(cfg, { claudePath, log = console.log, core = create
   });
   server.requestTimeout = 0; // SSE streams are long-lived
   server.headersTimeout = 20e3;
+  server.on('listening', () => { if (preview) preview.ownPort = server.address()?.port || 0; });
+  // WebSockets are only used by previewed apps (live reload)
+  server.on('upgrade', (req, socket, head) => {
+    if (preview?.isPreviewHost(req)) return preview.upgrade(req, socket, head);
+    socket.destroy();
+  });
   server.on('close', () => core.stop());
-  return { server, core, api, runner: core.runner, store: core.store, sessions: web?.sessions || null, healthId };
+  return { server, core, api, runner: core.runner, store: core.store, sessions: web?.sessions || null, preview, healthId };
 }
 
 export { UUID_RE };

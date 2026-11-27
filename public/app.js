@@ -316,6 +316,7 @@ $('#menu').addEventListener('click', () => {
     h('div', { class: 'row menu-theme' }, h('span', { class: 'grow' }, 'Theme'), themePicker()),
     h('div', { class: 'list menu' },
       h('button', { class: 'btn', onclick: () => { close(); location.hash = '#/new'; } }, '＋ New session'),
+      h('button', { class: 'btn', onclick: () => { close(); showPreview(); } }, '🖥 Preview an app…'),
       state.me?.push ? h('button', { class: 'btn', onclick: () => { close(); showPushSettings(); } }, '🔔 Phone notifications…') : null,
       alertsOn() ? h('button', { class: 'btn', onclick: () => { close(); showAlertSettings(); } }, '🔕 Alert settings…') : null,
       state.me?.whatsapp?.enabled ? h('button', { class: 'btn', onclick: async () => {
@@ -1799,6 +1800,58 @@ function plainEvents(events, rel = s => s) {
   return out.length ? out : [h('div', { class: 'empty' }, 'No messages yet.')];
 }
 
+// ---------- a chat's ⋯ menu ----------
+function sessionActions(id, info, onRename) {
+  const item = (label, fn) => h('button', { class: 'btn', onclick: () => { close(); fn(); } }, label);
+  const close = openSheet(info.title || 'This chat',
+    h('div', { class: 'list menu' },
+      item('🖥 Preview the app…', () => showPreview(id))));
+  return close;
+}
+
+// ---------- app preview: the dev server Claude is working on, opened on this device ----------
+async function showPreview(sessionId) {
+  const body = h('div', { class: 'list' }, h('div', { class: 'muted small' }, 'Looking for apps running on the computer…'));
+  const close = openSheet('Preview an app', body);
+  let d;
+  try { d = await api('GET', `/api/preview${sessionId ? `?sessionId=${sessionId}` : ''}`); }
+  catch (x) { return body.replaceChildren(h('div', { class: 'empty' }, x.message)); }
+  if (!d.enabled) {
+    return body.replaceChildren(h('div', { class: 'muted small' },
+      'App preview is off. It needs its own address on your tunnel (for example preview.example.com): run ',
+      h('code', {}, 'npm run setup:domain -- --preview preview.example.com'), ' on the computer, then restart Handoff.'));
+  }
+  const open = async port => {
+    const w = window.open('', '_blank'); // opened during the tap, so the browser doesn't block it
+    try {
+      const r = await api('POST', '/api/preview', { port });
+      if (w) w.location.href = r.url; else location.href = r.url;
+      close();
+    } catch (x) { w?.close(); toast(x.message, 5000); }
+  };
+  const byPort = new Map(d.ports.map(p => [p.port, p]));
+  const row = (port, note) => {
+    const p = byPort.get(port);
+    return h('button', { class: 'card preview-port', onclick: () => open(port) },
+      h('div', { class: 't' }, `localhost:${port}`, p?.title ? h('span', { class: 'muted' }, ` · ${p.title}`) : null),
+      h('div', { class: 's' }, [note, p ? (p.process || 'running') : 'not running right now'].filter(Boolean).join(' · ')));
+  };
+  const mentioned = d.mentioned.map(p => row(p, 'mentioned in this chat'));
+  const web = d.ports.filter(p => p.web && !d.mentioned.includes(p.port)).map(p => row(p.port, ''));
+  const other = d.ports.filter(p => !p.web && !d.mentioned.includes(p.port));
+  const portBox = h('input', { type: 'text', inputmode: 'numeric', placeholder: 'Port, e.g. 3000', 'aria-label': 'Port', maxlength: '5' });
+  const go = () => { const n = Number(portBox.value.trim()); if (n) open(n); };
+  portBox.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+  body.replaceChildren(
+    h('div', { class: 'muted small' }, `Opens on ${d.hostname}, behind its own sign-in, as if you were at the computer. Links you get here work once.`),
+    ...(mentioned.length ? [h('div', { class: 'label' }, 'From this chat'), ...mentioned] : []),
+    h('div', { class: 'label' }, 'Web apps running now'),
+    ...(web.length ? web : [h('div', { class: 'muted small' }, 'None found. Start the dev server (or ask Claude to), then look again.')]),
+    other.length ? h('details', { class: 'small' }, h('summary', { class: 'muted' }, `${other.length} other program${other.length === 1 ? '' : 's'} listening`),
+      ...other.map(p => row(p.port, ''))) : null,
+    h('div', { class: 'row' }, portBox, h('button', { class: 'btn primary', onclick: go }, 'Open')));
+}
+
 // ---------- quick replies: one tap sends a common answer; the list can be edited ----------
 const QUICK_DEFAULT = ['Continue', 'Yes, go ahead', 'Run the tests', 'Explain that more simply', 'Summarize what you did'];
 function editQuickReplies(onSave) {
@@ -1886,9 +1939,11 @@ async function sessionView(id, params = new URLSearchParams()) {
   };
   const activitySoon = () => { clearTimeout(actTimer); actTimer = setTimeout(loadActivity, 700); };
   state.cleanup.push(() => clearTimeout(actTimer));
+  // everything else this chat can do: preview its app, rename, pin, tag, archive, export, share
+  const moreBtn = h('button', { class: 'icon', title: 'More', 'aria-label': 'More actions for this chat', onclick: () => sessionActions(id, info, t => { info.title = t; setTop(t || 'Session', info.projectKey ? `#/p/${encodeURIComponent(info.projectKey)}` : '#/'); }) }, '⋯');
   // pinned under the top bar, so status, actions and tabs stay in reach however far the chat scrolls
   const head = h('div', { class: 'session-head' },
-    h('div', { class: 'session-bar' }, status, apiChip(info.via), h('div', { class: 'cwd mono', title: info.cwd || '' }, h('span', { dir: 'ltr' }, info.cwd || '')), findBtn, muteBtn, intBtn, stopBtn),
+    h('div', { class: 'session-bar' }, status, apiChip(info.via), h('div', { class: 'cwd mono', title: info.cwd || '' }, h('span', { dir: 'ltr' }, info.cwd || '')), findBtn, muteBtn, moreBtn, intBtn, stopBtn),
     settings, todoBox);
   const msgs = h('div', { id: 'msgs' });
   const working = h('div', { class: 'working', hidden: true }, h('span', { class: 'spinner' }), h('span', { class: 'wtext' }, 'Claude is working…'));

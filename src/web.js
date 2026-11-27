@@ -14,12 +14,13 @@ import { injectMessage } from './inbox.js';
 import { changes, diff, commit as gitCommit, push as gitPush, discard as gitDiscard, commitContext, tidyMessage, createWorktree, dropWorktree, removeWorktree } from './changes.js';
 import { parseImages, saveForLiveSession } from './attachments.js';
 import { json, sse, readJson, clientIp, delay, BODY_WITH_PHOTOS } from './http-util.js';
+import { mentionedPorts } from './preview.js';
 
 const PUBLIC = path.join(ROOT, 'public');
 const COOKIE = 'handoff_sid';
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json', '.png': 'image/png' };
 
-export function createWeb(core, { log = console.log } = {}) {
+export function createWeb(core, { log = console.log, preview = null } = {}) {
   const { cfg, store, runner, notifier, push, audit, answerQuestion, files, activity, folderPicker, search, keys } = core;
   const sessions = new SessionStore(cfg);
   const limiter = new LoginLimiter();
@@ -122,6 +123,7 @@ export function createWeb(core, { log = console.log } = {}) {
   route('POST', /^\/api\/logout-all$/, async (req, res, ctx) => {
     const b = await readJson(req).catch(() => ({}));
     sessions.destroyAll();
+    preview?.clear();
     // API keys outlive sign-ins unless asked: a stolen browser cookie could have made one
     const revoked = b.revokeKeys ? keys.revokeAll() : 0;
     audit(ctx.ip, 'logout_all', { revokedKeys: revoked || undefined });
@@ -193,7 +195,7 @@ export function createWeb(core, { log = console.log } = {}) {
 
   // The settings the page is built with. `version` covers them and the page's own files: an open page
   // that reconnects and gets a different one (the server restarted with an update) reloads itself.
-  const pageSettings = () => ({ totp: cfg.totpEnabled, allowBypass: cfg.allowBypassPermissions, defaultMode: runner.normalizeMode(cfg.defaultPermissionMode), files: !!cfg.fileBrowser, git: !!cfg.gitActions, search: !!cfg.search, push: !!cfg.push, api: !!cfg.api });
+  const pageSettings = () => ({ totp: cfg.totpEnabled, allowBypass: cfg.allowBypassPermissions, defaultMode: runner.normalizeMode(cfg.defaultPermissionMode), files: !!cfg.fileBrowser, git: !!cfg.gitActions, search: !!cfg.search, push: !!cfg.push, api: !!cfg.api, preview: !!preview?.enabled });
   const pageFiles = crypto.createHash('sha256');
   for (const f of fs.readdirSync(PUBLIC, { withFileTypes: true }).filter(f => f.isFile()).map(f => f.name).sort()) pageFiles.update(f).update(fs.readFileSync(path.join(PUBLIC, f)));
   const filesHash = pageFiles.digest('hex');
@@ -380,6 +382,26 @@ export function createWeb(core, { log = console.log } = {}) {
     json(res, 200, r);
   });
 
+  // ---------- app preview (HANDOFF_PREVIEW_HOSTNAME) ----------
+  // what could be previewed: ports the session's chat mentions, and everything listening on the computer
+  route('GET', /^\/api\/preview$/, async (req, res, ctx) => {
+    if (!preview?.enabled) return json(res, 200, { enabled: false });
+    const sid = ctx.url.searchParams.get('sessionId');
+    let mentioned = [];
+    if (sid && UUID_RE.test(sid)) {
+      const file = await store.sessionFile(sid);
+      if (file) mentioned = mentionedPorts(await readTail(file, 512 * 1024));
+    }
+    json(res, 200, { enabled: true, hostname: cfg.previewHostname, mentioned, ports: await preview.ports() });
+  });
+  route('POST', /^\/api\/preview$/, async (req, res, ctx) => {
+    const b = await readJson(req);
+    if (!preview) throw httpErr(404, 'App preview needs the web app.');
+    const r = preview.ticket(b.port);
+    audit(ctx.ip, 'preview_open', { port: r.port });
+    json(res, 200, r);
+  });
+
   // ---------- search (optional; on by default) ----------
   const searchIndex = () => { if (!search) throw httpErr(404, 'search is turned off (HANDOFF_SEARCH)'); return search; };
   const query = ctx => String(ctx.url.searchParams.get('q') || '').slice(0, 200);
@@ -521,6 +543,18 @@ export function createWeb(core, { log = console.log } = {}) {
   }
 
   return { handle, sessions };
+}
+
+// the last `bytes` of a file, as text
+async function readTail(file, bytes) {
+  const fh = await fsp.open(file, 'r');
+  try {
+    const { size } = await fh.stat();
+    const len = Math.min(size, bytes);
+    const buf = Buffer.alloc(len);
+    await fh.read(buf, 0, len, size - len);
+    return buf.toString('utf8');
+  } finally { await fh.close(); }
 }
 
 function parseCookies(h = '') {

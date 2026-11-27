@@ -519,3 +519,6 @@ input.reauth { width: 12em; flex: none; }
 .try-col { min-width: 0; }
 .try-col .msg { white-space: normal; }
 .tryit details pre { max-height: 360px; overflow: auto; }
+
+/* ---------- app preview ---------- */
+button.preview-port.card { width: 100%; text-align: left; margin: 0; }

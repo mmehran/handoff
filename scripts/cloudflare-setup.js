@@ -7,6 +7,8 @@
 //
 //   npm run setup:domain                        (asks for everything)
 //   npm run setup:domain -- --hostname claude.example.com --account <account id>
+//   npm run setup:domain -- --preview preview.example.com   (adds the App preview's own hostname
+//                                                          to the same tunnel; --preview none removes it)
 //   (or set CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID in the environment for this one command)
 import readline from 'node:readline';
 import { loadConfig, updateEnvFile } from '../src/config.js';
@@ -20,13 +22,22 @@ const askHidden = q => new Promise(r => {
   rl.question(q, a => { rl._writeToOutput = write; r(a.trim()); });
 });
 
-const hostname = (arg('--hostname') || await ask('Hostname to use (e.g. claude.example.com): ')).toLowerCase();
+const cfg = loadConfig();
+const hostname = (arg('--hostname') || await ask(`Hostname to use (e.g. claude.example.com)${cfg.publicHostname ? ` [${cfg.publicHostname}]` : ''}: `) || cfg.publicHostname).toLowerCase();
+// App preview: a second hostname on the same tunnel; kept from the last run unless changed
+const previewArg = arg('--preview');
+const preview = (previewArg === 'none' ? '' : previewArg || cfg.previewHostname || '').toLowerCase();
 const account = arg('--account') || process.env.CLOUDFLARE_ACCOUNT_ID || await ask('Cloudflare account ID (dashboard > your domain > Overview, right side): ');
 const token = process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN || await askHidden('Cloudflare API token (input hidden, not saved): ');
 const tunnelName = arg('--name') || 'handoff';
 rl.close();
-if (!token || !/^[0-9a-f]{32}$/i.test(account) || !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(hostname)) {
+const HOST_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/;
+if (!token || !/^[0-9a-f]{32}$/i.test(account) || !HOST_RE.test(hostname)) {
   console.error('Need a hostname like claude.example.com, a 32-character account ID and an API token.');
+  process.exit(1);
+}
+if (preview && (!HOST_RE.test(preview) || preview === hostname)) {
+  console.error('The preview hostname must be another hostname, like preview.example.com.');
   process.exit(1);
 }
 
@@ -40,13 +51,15 @@ async function cf(method, path, body) {
   return j.result;
 }
 
-const cfg = loadConfig();
-
-// 1) zone that owns the hostname (longest matching suffix)
+// 1) zone that owns each hostname (longest matching suffix)
 const zones = await cf('GET', `/zones?per_page=50&account.id=${account}`);
-const zone = zones.filter(z => hostname === z.name || hostname.endsWith('.' + z.name)).sort((a, b) => b.name.length - a.name.length)[0];
-if (!zone) throw new Error(`no zone in this account covers ${hostname} (is the domain added to Cloudflare?)`);
-console.log(`zone: ${zone.name}`);
+const zoneOf = host => {
+  const z = zones.filter(z => host === z.name || host.endsWith('.' + z.name)).sort((a, b) => b.name.length - a.name.length)[0];
+  if (!z) throw new Error(`no zone in this account covers ${host} (is the domain added to Cloudflare?)`);
+  return z;
+};
+const hosts = [hostname, ...(preview ? [preview] : [])];
+for (const h of hosts) console.log(`zone: ${zoneOf(h).name}`);
 
 // 2) tunnel (reuse by name)
 let tunnel = (await cf('GET', `/accounts/${account}/cfd_tunnel?is_deleted=false&name=${encodeURIComponent(tunnelName)}`))[0];
@@ -55,26 +68,30 @@ if (!tunnel) {
   console.log(`created tunnel ${tunnel.name} (${tunnel.id})`);
 } else console.log(`reusing tunnel ${tunnel.name} (${tunnel.id})`);
 
-// 3) ingress: hostname -> local server; everything else 404
+// 3) ingress: the hostname (and the preview hostname) -> local server; everything else 404
+const local = `http://127.0.0.1:${cfg.port}`;
 await cf('PUT', `/accounts/${account}/cfd_tunnel/${tunnel.id}/configurations`, {
-  config: { ingress: [{ hostname, service: `http://127.0.0.1:${cfg.port}` }, { service: 'http_status:404' }] }
+  config: { ingress: [...hosts.map(h => ({ hostname: h, service: local })), { service: 'http_status:404' }] }
 });
-console.log(`ingress: ${hostname} -> http://127.0.0.1:${cfg.port}`);
+for (const h of hosts) console.log(`ingress: ${h} -> ${local}`);
 
 // 4) DNS: proxied CNAME to the tunnel; never overwrite a record that points elsewhere
 const target = `${tunnel.id}.cfargotunnel.com`;
-const existing = await cf('GET', `/zones/${zone.id}/dns_records?name=${hostname}`);
-if (!existing.length) {
-  await cf('POST', `/zones/${zone.id}/dns_records`, { type: 'CNAME', name: hostname, content: target, proxied: true, comment: 'Handoff tunnel' });
-  console.log(`dns: created CNAME ${hostname} -> ${target}`);
-} else if (existing.length === 1 && existing[0].type === 'CNAME' && existing[0].content.endsWith('.cfargotunnel.com')) {
-  if (existing[0].content !== target) await cf('PATCH', `/zones/${zone.id}/dns_records/${existing[0].id}`, { content: target, proxied: true });
-  console.log(`dns: CNAME ${hostname} -> ${target}`);
-} else {
-  throw new Error(`${hostname} already has DNS records that are not a tunnel (${existing.map(r => r.type + ' ' + r.content).join(', ')}); not touching them`);
+for (const h of hosts) {
+  const zone = zoneOf(h);
+  const existing = await cf('GET', `/zones/${zone.id}/dns_records?name=${h}`);
+  if (!existing.length) {
+    await cf('POST', `/zones/${zone.id}/dns_records`, { type: 'CNAME', name: h, content: target, proxied: true, comment: 'Handoff tunnel' });
+    console.log(`dns: created CNAME ${h} -> ${target}`);
+  } else if (existing.length === 1 && existing[0].type === 'CNAME' && existing[0].content.endsWith('.cfargotunnel.com')) {
+    if (existing[0].content !== target) await cf('PATCH', `/zones/${zone.id}/dns_records/${existing[0].id}`, { content: target, proxied: true });
+    console.log(`dns: CNAME ${h} -> ${target}`);
+  } else {
+    throw new Error(`${h} already has DNS records that are not a tunnel (${existing.map(r => r.type + ' ' + r.content).join(', ')}); not touching them`);
+  }
 }
 
 // 5) run token for cloudflared
 const runToken = await cf('GET', `/accounts/${account}/cfd_tunnel/${tunnel.id}/token`);
-updateEnvFile({ HANDOFF_TUNNEL: 'cloudflare', HANDOFF_CLOUDFLARE_TUNNEL_TOKEN: runToken, HANDOFF_PUBLIC_HOSTNAME: hostname });
-console.log(`\nSaved the tunnel settings to .env. Start with:  npm start\nPublic address: https://${hostname}`);
+updateEnvFile({ HANDOFF_TUNNEL: 'cloudflare', HANDOFF_CLOUDFLARE_TUNNEL_TOKEN: runToken, HANDOFF_PUBLIC_HOSTNAME: hostname, HANDOFF_PREVIEW_HOSTNAME: preview });
+console.log(`\nSaved the tunnel settings to .env. Start with:  npm start\nPublic address: https://${hostname}${preview ? `\nApp preview:    https://${preview}` : ''}`);

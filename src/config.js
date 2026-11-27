@@ -85,6 +85,8 @@ export function loadConfig() {
     tunnelToken: str('HANDOFF_CLOUDFLARE_TUNNEL_TOKEN'),
     tunnelProtocol: ['quic', 'http2'].includes(str('HANDOFF_TUNNEL_PROTOCOL').toLowerCase()) ? str('HANDOFF_TUNNEL_PROTOCOL').toLowerCase() : 'auto',
     publicHostname: str('HANDOFF_PUBLIC_HOSTNAME').replace(/^https?:\/\//, '').replace(/\/.*$/, '').toLowerCase(),
+    // App preview: dev servers on the computer opened through their own hostname on the same tunnel
+    previewHostname: str('HANDOFF_PREVIEW_HOSTNAME').replace(/^https?:\/\//, '').replace(/\/.*$/, '').toLowerCase(),
     notify: {
       enabled: bool('HANDOFF_WHATSAPP_ENABLED'),
       url: str('HANDOFF_WHATSAPP_URL', `http://127.0.0.1:${num('HANDOFF_WHATSAPP_PORT', 7870)}`).replace(/\/+$/, ''),
