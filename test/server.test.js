@@ -515,3 +515,19 @@ test('a share that reaches the server (service worker not installed yet) opens t
   assert.equal(m.share_target.action, '/share');
   assert.deepEqual(m.shortcuts.map(s => s.url), ['/#/new', '/#/?search=1']);
 });
+
+test('a chained step queued from the web app is sent to the chat when it is idle, then the queue is empty', async () => {
+  const r = await req('POST', `/api/sessions/${desktopId}/queue`, { text: 'then run the tests' });
+  assert.equal(r.status, 200);
+  // this chat is driven by Handoff by now (earlier tests resumed it), so the step goes to that process
+  let seen = false;
+  for (let i = 0; i < 80 && !seen; i++) {
+    await new Promise(res => setTimeout(res, 100));
+    const t = await req('GET', `/api/sessions/${desktopId}/transcript`);
+    seen = t.json.events.some(e => e.kind === 'user' && e.text.includes('then run the tests'));
+  }
+  assert.ok(seen, 'the step reached the chat');
+  assert.deepEqual((await req('GET', `/api/sessions/${desktopId}/queue`)).json.steps, []);
+  assert.equal((await req('POST', `/api/sessions/${desktopId}/queue`, { text: ' ' })).status, 400);
+  assert.equal((await req('POST', '/api/sessions/00000000-0000-4000-8000-000000000000/queue', { text: 'x' })).status, 404);
+});

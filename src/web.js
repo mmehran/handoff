@@ -382,6 +382,23 @@ export function createWeb(core, { log = console.log, preview = null } = {}) {
     json(res, 200, r);
   });
 
+  // ---------- chained prompts: steps sent one after another as Claude finishes each ----------
+  const queue = core.queue;
+  queue.on('change', v => broadcast('queue', v));
+  const step = /^\/api\/sessions\/([0-9a-f-]{36})\/queue\/([0-9a-f]{12})$/;
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/queue$/, (req, res, ctx, m) => json(res, 200, queue.view(m[1])));
+  route('POST', /^\/api\/sessions\/([0-9a-f-]{36})\/queue$/, async (req, res, ctx, m) => {
+    const b = await readJson(req);
+    if (!(await store.sessionInfo(m[1])) && !runner.bySession(m[1])) throw httpErr(404, 'session not found');
+    const v = queue.add(m[1], b.text, b);
+    audit(ctx.ip, 'queue_add', { sessionId: m[1], steps: v.steps.length, text: String(b.text || '').slice(0, 200) });
+    json(res, 200, v);
+  });
+  route('DELETE', step, (req, res, ctx, m) => json(res, 200, queue.remove(m[1], m[2])));
+  route('POST', /^\/api\/sessions\/([0-9a-f-]{36})\/queue\/([0-9a-f]{12})\/move$/, async (req, res, ctx, m) => json(res, 200, queue.move(m[1], m[2], Number((await readJson(req)).by) || 0)));
+  route('POST', /^\/api\/sessions\/([0-9a-f-]{36})\/queue\/pause$/, async (req, res, ctx, m) => json(res, 200, queue.pause(m[1], !!(await readJson(req)).paused)));
+  route('DELETE', /^\/api\/sessions\/([0-9a-f-]{36})\/queue$/, (req, res, ctx, m) => { audit(ctx.ip, 'queue_clear', { sessionId: m[1] }); json(res, 200, queue.clear(m[1])); });
+
   // ---------- usage: tokens, estimated cost and the plan's limits ----------
   route('GET', /^\/api\/usage$/, async (req, res, ctx) => {
     const days = [1, 7, 30, 90].includes(Number(ctx.url.searchParams.get('days'))) ? Number(ctx.url.searchParams.get('days')) : 30;

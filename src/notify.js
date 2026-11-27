@@ -298,6 +298,8 @@ export class Notifier {
   event(kind, sessionId, { detail = '', cwd = '', title = '', force = false, permission = null } = {}) {
     if (!this.active || !this.wants(kind) || !sessionId) return false;
     if ((kind === 'done' || kind === 'error') && (this.quietUntil?.get(sessionId) || 0) > Date.now()) return false;
+    // a chained prompt is about to be sent: "finished" comes after the last step
+    if (kind === 'done' && this.moreQueued?.(sessionId)) return false;
     if (this.isMuted(cwd) || this.mutedSessions.has(sessionId)) return false;
     if (inQuiet(this.quiet, this.now()) && !this.quietAllow.has(kind)) {
       this.held.push({ kind, sessionId, title, cwd, at: Date.now() });

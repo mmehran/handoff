@@ -963,6 +963,8 @@ function connectEvents() {
   });
   es.addEventListener('permission_resolved', e => { state.perms.delete(JSON.parse(e.data).id); renderPerms(); });
   es.addEventListener('whatsapp', e => showWhatsApp(JSON.parse(e.data)));
+  // a chat's queued steps changed (one was sent, or another device edited them)
+  es.addEventListener('queue', e => window.dispatchEvent(new CustomEvent('handoff-queue', { detail: JSON.parse(e.data) })));
 }
 
 // WhatsApp alerts that can't be delivered fail silently, so say so at the top of every page until it's fixed.
@@ -2211,9 +2213,38 @@ async function sessionView(id, params = new URLSearchParams()) {
   const updateQuick = () => { quick.hidden = !idleNow || !!ta.value.trim() || !!info.question; };
   renderQuick();
   ta.addEventListener('input', updateQuick);
-  const composer = h('div', { class: 'composer' }, notice, quick, photos.strip, photos.input,
+  // Chained prompts: "Then" queues what's typed; each step is sent when Claude has finished the one
+  // before, even with this page closed
+  const queueBox = h('div', { class: 'queue', hidden: true });
+  const renderQueue = v => {
+    queueBox.hidden = !v.steps.length;
+    if (!v.steps.length) return queueBox.replaceChildren();
+    const act = (method, url, body) => api(method, `/api/sessions/${id}/queue${url}`, body).then(renderQueue, x => toast(x.message));
+    queueBox.replaceChildren(
+      h('div', { class: 'row' }, h('b', { class: 'small' }, `Then, in order (${v.steps.length})`), h('span', { class: 'grow' }),
+        h('button', { class: 'btn sm', onclick: () => act('POST', '/pause', { paused: !v.paused }) }, v.paused ? '▶ Go on' : '⏸ Pause'),
+        h('button', { class: 'btn sm danger', onclick: () => act('DELETE', '') }, 'Clear')),
+      v.note || v.paused ? h('div', { class: 'small queue-note' }, v.note || 'Paused: no step is sent until you go on.') : null,
+      h('ol', { class: 'queue-list' }, ...v.steps.map((s, i) => h('li', {},
+        h('span', { class: 'queue-text', title: s.text }, s.text),
+        i ? h('button', { class: 'icon sm', title: 'Move up', 'aria-label': 'Move up', onclick: () => act('POST', `/${s.id}/move`, { by: -1 }) }, '↑') : null,
+        h('button', { class: 'icon sm', title: 'Remove this step', 'aria-label': 'Remove this step', onclick: () => act('DELETE', `/${s.id}`) }, '✕')))));
+  };
+  const onQueue = e => { if (e.detail.sessionId === id) renderQueue(e.detail); };
+  window.addEventListener('handoff-queue', onQueue);
+  state.cleanup.push(() => window.removeEventListener('handoff-queue', onQueue));
+  api('GET', `/api/sessions/${id}/queue`).then(renderQueue).catch(() => {});
+  const thenBtn = h('button', { class: 'btn sm', type: 'button', title: 'Send this after Claude finishes what it is doing (and after any steps already waiting)', onclick: async () => {
+    const text = ta.value.trim();
+    if (!text) { toast('Type the next step first, then tap Then.'); ta.focus(); return; }
+    try {
+      renderQueue(await api('POST', `/api/sessions/${id}/queue`, { text, ...picks.values() }));
+      ta.value = ''; ta.style.height = ''; updateQuick();
+    } catch (x) { toast(x.message); }
+  } }, '⏭ Then');
+  const composer = h('div', { class: 'composer' }, queueBox, notice, quick, photos.strip, photos.input,
     h('div', { class: 'input-row' }, photos.button, ta, send),
-    h('div', { class: 'opts' }, ...picks.els, forkLabel));
+    h('div', { class: 'opts' }, ...picks.els, thenBtn, forkLabel));
   const chat = h('div', { class: 'chat' }, findPanel, older, msgs, working, jump, composer);
 
   // Chat / Files / Changes tabs; Files and Changes only when the server has the file browser turned on

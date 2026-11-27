@@ -538,3 +538,13 @@ button.preview-port.card { width: 100%; text-align: left; margin: 0; }
 .usage-chart { display: flex; align-items: flex-end; gap: 2px; height: 120px; padding: 6px 0; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
 .usage-col { flex: 1; height: 100%; display: flex; align-items: flex-end; min-width: 2px; }
 .usage-col span { display: block; width: 100%; background: var(--accent); border-radius: 3px 3px 0 0; }
+
+/* ---------- chained prompts ---------- */
+.queue { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px; }
+.queue .row { gap: 6px; }
+.queue-note { color: var(--warn); }
+.queue-list { margin: 0; padding-left: 1.4em; display: flex; flex-direction: column; gap: 2px; max-height: 30vh; overflow: auto; }
+.queue-list li { font-size: 13.5px; }
+.queue-list li > * { vertical-align: middle; }
+.queue-text { display: inline-block; max-width: calc(100% - 80px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.icon.sm { font-size: 14px; padding: 2px 6px; min-width: 0; min-height: 0; }

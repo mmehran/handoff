@@ -18,6 +18,7 @@ import { FolderPicker } from './folders.js';
 import { needsHttp } from './services.js';
 import { KeyStore } from './apikeys.js';
 import { Usage, Limits } from './usage.js';
+import { PromptQueue } from './queue.js';
 
 export function createCore(cfg, { claudePath, log = console.log } = {}) {
   const store = new Store(cfg);
@@ -99,6 +100,22 @@ export function createCore(cfg, { claudePath, log = console.log } = {}) {
   // API keys (and what is remembered about their use); the web app manages them too
   const keys = new KeyStore({ cfg });
 
+  // Chained prompts: each queued step goes to the chat when Claude has finished the one before, the
+  // way a typed message would (straight into a laptop session, or to our own process)
+  const queue = new PromptQueue({
+    store, runner, dataDir: DATA_DIR, log,
+    deliver: async (sessionId, step) => {
+      const run = runner.bySession(sessionId);
+      const info = await store.sessionInfo(sessionId);
+      const live = !run && info?.live;
+      if (live) return injectMessage(cfg.claudeHome, live, step.text);
+      if (!run && !canStart) throw httpErr(409, 'that session is no longer running on the computer');
+      // a running chat keeps its own mode and model; one that has to be started uses the step's
+      await runner.send({ sessionId, cwd: run?.cwd || info?.cwd, text: step.text, mode: run?.mode || step.mode, model: run ? undefined : step.model, effort: run ? undefined : step.effort });
+    }
+  });
+  notifier.moreQueued = id => queue.pending(id) > 0 && !queue.view(id).paused;
+
   // Usage page: tokens and cost from the transcripts, and the plan's limits as Claude Code reports them
   // on every run Handoff drives
   const usage = new Usage({ store, dataDir: DATA_DIR, log });
@@ -108,6 +125,6 @@ export function createCore(cfg, { claudePath, log = console.log } = {}) {
   const usageTimer = cfg.web ? setTimeout(() => usage.update().catch(e => log(`[usage] ${e.message}`)), 30e3) : null;
   usageTimer?.unref?.();
 
-  const stop = () => { clearTimeout(searchTimer); clearTimeout(usageTimer); runner.shutdown(); notifier.stop(); keys.flush(); };
-  return { cfg, store, runner, push, notifier, events, audit, answerQuestion, files, activity, folderPicker, search, keys, usage, limits, stop, log };
+  const stop = () => { clearTimeout(searchTimer); clearTimeout(usageTimer); queue.stop(); runner.shutdown(); notifier.stop(); keys.flush(); };
+  return { cfg, store, runner, push, notifier, events, audit, answerQuestion, files, activity, folderPicker, search, keys, usage, limits, queue, stop, log };
 }
