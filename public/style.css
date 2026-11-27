@@ -328,7 +328,7 @@ body.two-pane .jump { left: calc(50% + var(--side-w) / 2); }
 body.two-pane .composer { margin-left: -28px; margin-right: -28px; padding-left: 28px; padding-right: 28px; }
 .composer .input-row { display: flex; align-items: flex-end; gap: 8px; }
 .composer textarea { flex: 1; resize: none; min-height: 44px; max-height: 40vh; border-radius: 22px; padding: 10px 16px; line-height: 1.45; }
-.composer .send, .composer .photo-btn { flex: none; width: 44px; height: 44px; min-height: 44px; padding: 0; border-radius: 50%; }
+.composer .send, .composer .photo-btn, .composer .then { flex: none; width: 44px; height: 44px; min-height: 44px; padding: 0; border-radius: 50%; }
 .composer .send { font-size: 20px; font-weight: 750; }
 .composer .photo-btn { position: relative; font-size: 18px; }
 .photo-btn .count { position: absolute; top: -3px; right: -3px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: var(--accent); color: var(--on-accent); font-size: 11px; font-weight: 700; display: grid; place-items: center; }
@@ -554,3 +554,20 @@ button.preview-port.card { width: 100%; text-align: left; margin: 0; }
 button.card.keep { width: 100%; text-align: left; margin: 0; }
 button.card.keep.on { border-color: var(--accent); background: var(--accent-soft); }
 .laptop-chip { white-space: nowrap; }
+
+/* ---------- organise, export, share ---------- */
+.tag-bar { gap: 6px; margin: 4px 0 8px; }
+.chip-btn.on { border-color: var(--accent); background: var(--accent-soft); }
+.printable { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin-top: 10px; overflow-wrap: anywhere; }
+.printable h1 { font-size: 22px; margin: 0 0 4px; }
+.printable h2 { font-size: 15px; text-transform: none; letter-spacing: 0; color: var(--text); margin: 18px 0 6px; border-top: 1px solid var(--border); padding-top: 12px; }
+.printable h2 sub { font-weight: 400; color: var(--muted); font-size: 12px; margin-left: 6px; vertical-align: baseline; }
+@media print {
+  #topbar, #side, #banner, #perm-sheet, #toast, .no-print { display: none !important; }
+  body, #view { background: #fff !important; color: #000 !important; max-width: none; padding: 0; }
+  .printable { border: 0; padding: 0; background: #fff; }
+  .printable pre { white-space: pre-wrap; break-inside: avoid; }
+}
+.composer .then { font-size: 17px; }
+.ctx-sheet label.row { flex-wrap: nowrap; align-items: flex-start; }
+.ctx-sheet label.row input { flex: none; margin-top: 2px; }

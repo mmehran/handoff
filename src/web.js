@@ -8,13 +8,14 @@ import { ROOT, DATA_DIR, updateEnvFile } from './config.js';
 import { PRESETS, SCOPES, TOOL_PRESETS, LENGTHS } from './apikeys.js';
 import { EFFORTS } from './runner.js';
 import { verifyPassword, verifyTotp, SessionStore, LoginLimiter } from './auth.js';
-import { tailFile, normalize, UUID_RE } from './store.js';
+import { tailFile, normalize, UUID_RE, projectName } from './store.js';
 import { httpErr } from './runner.js';
 import { injectMessage } from './inbox.js';
 import { changes, diff, commit as gitCommit, push as gitPush, discard as gitDiscard, commitContext, tidyMessage, createWorktree, dropWorktree, removeWorktree } from './changes.js';
 import { parseImages, saveForLiveSession } from './attachments.js';
 import { json, sse, readJson, clientIp, delay, BODY_WITH_PHOTOS } from './http-util.js';
 import { mentionedPorts } from './preview.js';
+import { SessionMeta, Shares, toMarkdown } from './organise.js';
 
 const PUBLIC = path.join(ROOT, 'public');
 const COOKIE = 'handoff_sid';
@@ -24,6 +25,8 @@ export function createWeb(core, { log = console.log, preview = null } = {}) {
   const { cfg, store, runner, notifier, push, audit, answerQuestion, files, activity, folderPicker, search, keys } = core;
   const sessions = new SessionStore(cfg);
   const limiter = new LoginLimiter();
+  const meta = new SessionMeta({ dataDir: DATA_DIR });
+  const shares = new Shares({ dataDir: DATA_DIR });
   const globalClients = new Set();
 
   const broadcast = (event, data) => {
@@ -126,6 +129,7 @@ export function createWeb(core, { log = console.log, preview = null } = {}) {
     preview?.clear();
     // API keys outlive sign-ins unless asked: a stolen browser cookie could have made one
     const revoked = b.revokeKeys ? keys.revokeAll() : 0;
+    if (b.revokeKeys) shares.revokeAll(); // share links hand out access too
     audit(ctx.ip, 'logout_all', { revokedKeys: revoked || undefined });
     json(res, 200, { ok: true, revokedKeys: revoked });
   });
@@ -210,12 +214,12 @@ export function createWeb(core, { log = console.log, preview = null } = {}) {
     const list = await store.listSessions(decodeURIComponent(m[1]));
     if (!list) return json(res, 404, { error: 'project not found' });
     for (const s of list) { const r = runner.bySession(s.id); s.run = r ? r.status : null; s.via = keys.sessionKey(s.id)?.keyName || null; }
-    json(res, 200, list);
+    json(res, 200, list.map(s => meta.apply(s.id, s)));
   });
 
   route('GET', /^\/api\/live$/, async (req, res) => {
-    const titleOf = async id => (id && (await store.sessionInfo(id))?.title) || '';
-    const live = await Promise.all((await store.liveSessions()).map(async l => ({ ...l, title: l.name || await titleOf(l.sessionId) })));
+    const titleOf = async id => (id && (meta.get(id)?.title || (await store.sessionInfo(id))?.title)) || '';
+    const live = await Promise.all((await store.liveSessions()).map(async l => ({ ...l, title: meta.get(l.sessionId)?.title || l.name || await titleOf(l.sessionId) })));
     const runs = await Promise.all(runner.list().map(async r => ({ ...r, title: await titleOf(r.sessionId), via: keys.sessionKey(r.sessionId)?.keyName || null })));
     const ours = new Set(runs.map(r => r.sessionId));
     const others = live.filter(l => !ours.has(l.sessionId));
@@ -230,7 +234,7 @@ export function createWeb(core, { log = console.log, preview = null } = {}) {
     // a session our runner drives also shows up in the registry; only report *other* live processes
     if (info?.live && run && info.live.pid === run.proc.pid) info.live = null;
     json(res, 200, {
-      ...(info || { id: m[1], cwd: run.cwd, title: 'New session' }),
+      ...meta.apply(m[1], info || { id: m[1], cwd: run.cwd, title: 'New session' }),
       run: run ? runner.publicRun(run) : null,
       question: (await store.pendingQuestion(m[1])) || null,
       via: keys.sessionKey(m[1])?.keyName || null // started from the API, with this key
@@ -382,6 +386,64 @@ export function createWeb(core, { log = console.log, preview = null } = {}) {
     json(res, 200, r);
   });
 
+  // ---------- organise: titles, pins, tags, archive; export; read-only share links ----------
+  route('GET', /^\/api\/meta$/, async (req, res) => {
+    const all = meta.all();
+    // pinned chats with what the home page needs to list them
+    const pinned = await Promise.all(Object.entries(all).filter(([, m]) => m.pinned).sort((a, b) => b[1].pinned - a[1].pinned).map(async ([id, m]) => {
+      const info = await store.sessionInfo(id).catch(() => null);
+      return info ? meta.apply(id, { id, title: info.title, cwd: info.cwd, projectKey: info.projectKey, mtime: info.mtime, live: info.live?.status || null }) : null;
+    }));
+    json(res, 200, { tags: meta.tags(), pinned: pinned.filter(Boolean) });
+  });
+  route('POST', /^\/api\/sessions\/([0-9a-f-]{36})\/meta$/, async (req, res, ctx, m) => {
+    const b = await readJson(req);
+    if (!(await store.sessionInfo(m[1])) && !runner.bySession(m[1])) throw httpErr(404, 'session not found');
+    const patch = Object.fromEntries(['title', 'pinned', 'tags', 'archived'].filter(k => k in b).map(k => [k, b[k]]));
+    const r = meta.set(m[1], patch);
+    audit(ctx.ip, 'session_meta', { sessionId: m[1], ...patch });
+    json(res, 200, { ...r, tags: r.tags || [] });
+  });
+  const chatMarkdown = async (id, tools) => {
+    const info = await store.sessionInfo(id);
+    if (!info) throw httpErr(404, 'session not found');
+    const t = await store.readTranscript(id, null, 64 * 1024 * 1024, { full: true });
+    const title = meta.get(id)?.title || info.title;
+    return { title, project: projectName(info.cwd || ''), markdown: toMarkdown({ title, project: projectName(info.cwd || ''), events: t?.events || [], tools }) };
+  };
+  route('GET', /^\/api\/sessions\/([0-9a-f-]{36})\/export$/, async (req, res, ctx, m) => {
+    const c = await chatMarkdown(m[1], ctx.url.searchParams.get('tools') === '1');
+    audit(ctx.ip, 'session_export', { sessionId: m[1] });
+    if (ctx.url.searchParams.get('format') === 'json') return json(res, 200, c);
+    const name = (c.title || 'chat').replace(/[^\w\- ]+/g, '').trim().slice(0, 60) || 'chat';
+    res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}.md`, 'Cache-Control': 'no-store' });
+    res.end(c.markdown);
+  });
+  route('POST', /^\/api\/sessions\/([0-9a-f-]{36})\/share$/, async (req, res, ctx, m) => {
+    const b = await readJson(req);
+    if (!(await store.sessionInfo(m[1]))) throw httpErr(404, 'session not found');
+    const { token, record } = shares.create(m[1], { hours: b.hours, tools: !!b.tools });
+    audit(ctx.ip, 'share_create', { sessionId: m[1], shareId: record.id, hours: b.hours, tools: record.tools });
+    const host = cfg.publicHostname || req.headers.host;
+    json(res, 200, { ...record, url: `https://${host}/share/${token}` });
+  });
+  route('GET', /^\/api\/shares$/, (req, res, ctx) => json(res, 200, shares.of(ctx.url.searchParams.get('sessionId'))));
+  route('DELETE', /^\/api\/shares\/([0-9a-f]{12})$/, (req, res, ctx, m) => {
+    const ok = shares.revoke(m[1]);
+    audit(ctx.ip, 'share_revoke', { shareId: m[1] });
+    json(res, ok ? 200 : 404, ok ? { ok } : { error: 'no such link' });
+  });
+  // what a share link shows: that one chat, read-only, while the link lasts
+  route('GET', /^\/api\/share\/([A-Za-z0-9_-]{20,64})$/, async (req, res, ctx, m) => {
+    if (limiter.blocked(ctx.ip)) return json(res, 429, { error: 'Too many attempts. Try again later.' });
+    const rec = shares.find(m[1]);
+    if (!rec) { limiter.fail(ctx.ip); return json(res, 404, { error: 'This link has expired or was removed.' }); }
+    const c = await chatMarkdown(rec.sessionId, rec.tools).catch(() => null);
+    if (!c) return json(res, 404, { error: 'This chat no longer exists.' });
+    res.setHeader('X-Robots-Tag', 'noindex');
+    json(res, 200, { ...c, expires: rec.expires });
+  }, { public: true });
+
   // ---------- chained prompts: steps sent one after another as Claude finishes each ----------
   const queue = core.queue;
   queue.on('change', v => broadcast('queue', v));
@@ -430,7 +492,7 @@ export function createWeb(core, { log = console.log, preview = null } = {}) {
     let mentioned = [];
     if (sid && UUID_RE.test(sid)) {
       const file = await store.sessionFile(sid);
-      if (file) mentioned = mentionedPorts(await readTail(file, 512 * 1024));
+      if (file) mentioned = mentionedPorts(await readTail(file, 512 * 1024)).filter(p => preview.allowed(p));
     }
     json(res, 200, { enabled: true, hostname: cfg.previewHostname, mentioned, ports: await preview.ports() });
   });
@@ -624,6 +686,7 @@ function serveStatic(req, res, pathname, version) {
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404); return res.end('not found'); }
     if (rel === '/index.html') data = Buffer.from(String(data).replace(/(src|href)="\/(app\.js|theme\.js|style\.css)"/g, `$1="/$2?v=${version}"`));
+    if (pathname.startsWith('/share/')) res.setHeader('X-Robots-Tag', 'noindex'); // a shared chat is for whoever has the link only
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' }); // tiny files; always pick up updates
     res.end(req.method === 'HEAD' ? undefined : data);
   });

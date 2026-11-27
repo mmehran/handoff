@@ -16,6 +16,8 @@ const COOKIE = 'handoff_preview';
 const TICKET_MS = 2 * 60e3;          // a link from the web app works once, within 2 minutes
 const SESSION_MS = 12 * 3600e3;      // then the preview stays open for 12 hours
 const NEVER = new Set([2375, 2376]); // Docker's API: never reachable through here
+// where dev servers usually listen: Next/React/Express, Angular, Vite, Astro, Flask, Django, ...
+const COMMON = [3000, 3001, 3002, 3003, 4000, 4200, 4321, 5000, 5001, 5173, 5174, 5500, 8000, 8001, 8080, 8081, 8888, 9000];
 const HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'te', 'trailer']);
 
 export class Preview {
@@ -157,18 +159,22 @@ export class Preview {
 
   // ---------- which dev servers are running ----------
   // Ports something on this computer listens on (loopback or every address), with the program's name
-  // and, for ones that answer HTTP, the page title. Handoff's own ports are left out.
+  // and, for ones that answer HTTP, the page title. Handoff's own ports are left out. The usual dev
+  // server ports are tried as well, for when the system won't list what listens (no rights, a sandbox).
   async ports() {
     const found = await listening().catch(() => []);
     const out = [];
-    for (const f of found) {
-      try { this.checkPort(f.port); } catch { continue; }
-      if (!out.some(o => o.port === f.port)) out.push(f);
+    for (const f of [...found, ...COMMON.map(port => ({ port, pid: 0, process: '', guess: true }))]) {
+      if (!this.allowed(f.port) || out.some(o => o.port === f.port)) continue;
+      out.push(f);
     }
     out.sort((a, b) => a.port - b.port);
-    await Promise.all(out.slice(0, 40).map(async p => Object.assign(p, await probe(p.port))));
-    return out.filter(p => p.web).concat(out.filter(p => !p.web));
+    await Promise.all(out.slice(0, 60).map(async p => Object.assign(p, await probe(p.port))));
+    // a usual port nothing answers on isn't worth listing
+    return out.filter(p => p.web).concat(out.filter(p => !p.web && !p.guess)).map(({ guess, ...p }) => p);
   }
+
+  allowed(port) { try { this.checkPort(port); return true; } catch { return false; } }
 }
 
 // ports the session's transcript mentions (http://localhost:5173, 127.0.0.1:3000), newest first

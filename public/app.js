@@ -897,13 +897,15 @@ async function showKeyActivity(k) {
 
 // "Sign out everywhere", and optionally every API key too (a stolen cookie could have made one)
 async function signOutEverywhere() {
-  let keys = [];
+  let keys = [], links = [];
   try { keys = (await api('GET', '/api/keys')).keys; } catch { /* still sign out */ }
+  try { links = await api('GET', '/api/shares'); } catch { /* still sign out */ }
   const revoke = h('input', { type: 'checkbox' });
+  const what = [keys.length ? `${keys.length} API key${keys.length === 1 ? '' : 's'}` : '', links.length ? `${links.length} share link${links.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' and ');
   const close = openSheet('Sign out everywhere',
     h('div', { class: 'list' },
       h('div', {}, 'Every device signed in to Handoff is signed out, this one too.'),
-      keys.length ? h('label', { class: 'row' }, revoke, h('span', {}, `Also revoke all ${keys.length} API key${keys.length === 1 ? '' : 's'}`)) : null,
+      what ? h('label', { class: 'row' }, revoke, h('span', {}, `Also revoke all ${what}`)) : null,
       h('div', { class: 'row' }, h('button', { class: 'btn danger', onclick: async () => {
         await api('POST', '/api/logout-all', { revokeKeys: revoke.checked }).catch(() => {});
         close(); location.reload();
@@ -1261,6 +1263,7 @@ async function homeView() {
     ? h('div', { class: 'welcome' }, h('div', { class: 'welcome-icon' }), h('h1', {}, 'Pick up where Claude left off'),
         h('p', { class: 'muted' }, 'Open a live session or a project on the left, search every chat above, or start something new.'))
     : h('div', {}, h('h2', {}, 'Live now'), live, h('h2', {}, 'Projects'), filter, projList);
+  const pinnedBox = h('div', {});
   // the laptop at a glance: battery and whether it's kept awake; opens the Laptop sheet
   const laptopChip = h('button', { class: 'btn sm laptop-chip', hidden: true, title: 'Battery and keep awake', onclick: () => showLaptop() });
   api('GET', '/api/laptop').then(s => {
@@ -1269,13 +1272,18 @@ async function homeView() {
   }).catch(() => {});
   view.replaceChildren(...[
     h('div', { class: 'row' }, twoPane() ? null : h('a', { href: '#/new', class: 'btn primary' }, '＋ New session'), h('span', { class: 'grow' }), laptopChip),
-    ...(find ? [find, results] : []), normal].filter(Boolean));
+    ...(find ? [find, results] : []), pinnedBox, normal].filter(Boolean));
+  api('GET', '/api/meta').then(m => {
+    if (!m.pinned.length) return;
+    pinnedBox.replaceChildren(h('h2', {}, 'Pinned'), h('div', { class: 'list' }, ...m.pinned.map(s => sessionCard(s))));
+    pinnedBox.hidden = !!find?.value.trim();
+  }).catch(() => {});
   if (find) {
     let timer, seq = 0;
     const run = async () => {
       const q = find.value.trim();
       state.homeFind = q;
-      results.hidden = !q; normal.hidden = !!q;
+      results.hidden = !q; normal.hidden = !!q; pinnedBox.hidden = !!q;
       if (!q) return;
       const my = ++seq, terms = termsOf(q);
       results.replaceChildren(h('div', { class: 'muted small' }, 'Searching…'));
@@ -1325,10 +1333,29 @@ async function projectView(key) {
       h('div', { class: 'row' }, h('a', { class: 'btn primary', href: `#/new?cwd=${encodeURIComponent(p.cwd)}` }, '+ New session here'), muteBtn)),
     h('h2', {}, 'Sessions'), list);
   const sessions = await api('GET', `/api/projects/${encodeURIComponent(key)}/sessions`);
-  list.replaceChildren(...sessions.map(s => h('a', { class: 'card', href: `#/s/${s.id}` },
-    h('div', { class: 't' }, s.title, apiChip(s.via), s.run ? h('span', { class: `chip ${s.run}` }, 'remote ' + s.run) : s.live ? h('span', { class: `chip ${s.live}` }, s.live) : null),
-    h('div', { class: 's' }, `${ago(s.mtime)} · ${size(s.size)} · ${s.id.slice(0, 8)}`))));
-  if (!sessions.length) list.replaceChildren(h('div', { class: 'empty' }, 'No sessions.'));
+  // pinned first; archived ones only when asked; a tag tapped above the list filters it
+  let tag = null, showArchived = false;
+  const tagBar = h('div', { class: 'row tag-bar' });
+  const render = () => {
+    const tags = [...new Set(sessions.flatMap(s => s.tags || []))].sort();
+    const archived = sessions.filter(s => s.archived).length;
+    tagBar.replaceChildren(...tags.map(t => h('button', { class: 'chip-btn' + (t === tag ? ' on' : ''), onclick: () => { tag = t === tag ? null : t; render(); } }, '#' + t)),
+      archived ? h('button', { class: 'chip-btn' + (showArchived ? ' on' : ''), onclick: () => { showArchived = !showArchived; render(); } }, `🗄 Archived (${archived})`) : null);
+    tagBar.hidden = !tags.length && !archived;
+    const shown = sessions.filter(s => (showArchived ? s.archived : !s.archived) && (!tag || (s.tags || []).includes(tag)))
+      .sort((a, b) => (b.pinned || 0) - (a.pinned || 0) || b.mtime - a.mtime);
+    list.replaceChildren(...shown.map(s => sessionCard(s)));
+    if (!shown.length) list.replaceChildren(h('div', { class: 'empty' }, showArchived ? 'No archived sessions.' : tag ? `No sessions tagged #${tag}.` : 'No sessions.'));
+  };
+  list.before(tagBar);
+  render();
+}
+
+// one chat in a list: its title (ours if renamed), pin, tags and state
+function sessionCard(s) {
+  return h('a', { class: 'card', href: `#/s/${s.id}` },
+    h('div', { class: 't' }, s.pinned ? '📌 ' : '', s.title, apiChip(s.via), s.run ? h('span', { class: `chip ${s.run}` }, 'remote ' + s.run) : s.live ? h('span', { class: `chip ${s.live}` }, s.live) : null),
+    h('div', { class: 's' }, [ago(s.mtime), s.size != null ? size(s.size) : '', ...(s.tags || []).map(t => '#' + t), s.archived ? 'archived' : '', s.id.slice(0, 8)].filter(Boolean).join(' · ')));
 }
 
 // A multiple-choice question from Claude (AskUserQuestion): tap an option, or type your own.
@@ -1933,10 +1960,115 @@ function plainEvents(events, rel = s => s) {
 // ---------- a chat's ⋯ menu ----------
 function sessionActions(id, info, onRename) {
   const item = (label, fn) => h('button', { class: 'btn', onclick: () => { close(); fn(); } }, label);
-  const close = openSheet(info.title || 'This chat',
+  // Handoff's own labels for this chat (Claude Desktop keeps its own title)
+  const setMeta = async patch => {
+    try {
+      const r = await api('POST', `/api/sessions/${id}/meta`, patch);
+      Object.assign(info, { pinned: r.pinned || null, archived: r.archived || null, tags: r.tags || [] });
+      if ('title' in patch) { info.claudeTitle ||= info.title; onRename(r.title || info.claudeTitle); }
+      return r;
+    } catch (x) { toast(x.message); return null; }
+  };
+  const close = openSheet('This chat',
     h('div', { class: 'list menu' },
-      item('🖥 Preview the app…', () => showPreview(id))));
+      item('🖥 Preview the app…', () => showPreview(id)),
+      item('✏️ Rename…', () => renameChat(info, setMeta)),
+      item(info.pinned ? '📌 Unpin' : '📌 Pin to the home page', async () => { if (await setMeta({ pinned: !info.pinned })) toast(info.pinned ? 'Pinned' : 'Unpinned'); }),
+      item(`🏷 Tags…${info.tags?.length ? ` (${info.tags.map(t => '#' + t).join(' ')})` : ''}`, () => tagChat(info, setMeta)),
+      item(info.archived ? '🗄 Move out of the archive' : '🗄 Archive', async () => { if (await setMeta({ archived: !info.archived })) toast(info.archived ? 'Archived: hidden from the project list (Archived shows it)' : 'Back in the project list'); }),
+      item('⬇ Export as Markdown or PDF…', () => exportChat(id)),
+      item('🔗 Share a read-only link…', () => shareChat(id, info))));
   return close;
+}
+
+function renameChat(info, setMeta) {
+  const box = h('input', { type: 'text', value: info.title || '', maxlength: '200', 'aria-label': 'Title' });
+  const save = async title => { if (await setMeta({ title })) { close(); toast(title ? 'Renamed' : 'Back to Claude\'s title'); } };
+  box.addEventListener('keydown', e => { if (e.key === 'Enter') save(box.value); });
+  const close = openSheet('Rename this chat', h('div', { class: 'list' }, box,
+    h('div', { class: 'small muted' }, 'The new name shows in Handoff only; Claude Desktop keeps its own.'),
+    h('div', { class: 'row' }, info.claudeTitle ? h('button', { class: 'btn', onclick: () => save('') }, 'Use Claude\'s title') : null, h('span', { class: 'grow' }),
+      h('button', { class: 'btn primary', onclick: () => save(box.value) }, 'Save'))));
+  box.select();
+}
+
+async function tagChat(info, setMeta) {
+  const box = h('input', { type: 'text', value: (info.tags || []).join(', '), placeholder: 'e.g. bug, client-x, later', 'aria-label': 'Tags' });
+  const suggest = h('div', { class: 'row tag-bar' });
+  const save = async () => { if (await setMeta({ tags: box.value.split(/[,\s]+/) })) { close(); toast('Tags saved'); } };
+  box.addEventListener('keydown', e => { if (e.key === 'Enter') save(); });
+  const close = openSheet('Tags', h('div', { class: 'list' }, box, suggest,
+    h('div', { class: 'small muted' }, 'Separate tags with commas. In the project list, tap a tag to see only those chats.'),
+    h('div', { class: 'row' }, h('span', { class: 'grow' }), h('button', { class: 'btn primary', onclick: save }, 'Save'))));
+  try {
+    const { tags } = await api('GET', '/api/meta');
+    suggest.replaceChildren(...tags.map(({ tag }) => h('button', { class: 'chip-btn', onclick: () => {
+      const now = box.value.split(/[,\s]+/).filter(Boolean);
+      if (!now.includes(tag)) box.value = [...now, tag].join(', ');
+    } }, '#' + tag)));
+  } catch { /* typing works without suggestions */ }
+}
+
+function exportChat(id) {
+  const tools = h('input', { type: 'checkbox' });
+  const q = () => (tools.checked ? '?tools=1' : '');
+  const close = openSheet('Export this chat', h('div', { class: 'list' },
+    h('label', { class: 'row small' }, tools, h('span', {}, 'Include tool calls and their output')),
+    h('a', { class: 'btn', href: `/api/sessions/${id}/export${q()}`, download: '', onclick: e => { e.currentTarget.href = `/api/sessions/${id}/export${q()}`; setTimeout(close, 100); } }, '⬇ Markdown file (.md)'),
+    h('button', { class: 'btn', onclick: () => { close(); location.hash = `#/print/${id}${q()}`; } }, '🖨 PDF: open a printable page, then Save as PDF')));
+}
+
+async function shareChat(id, info) {
+  const hours = h('select', { 'aria-label': 'Link lasts' }, ...[[1, '1 hour'], [24, '1 day'], [168, '7 days'], [720, '30 days']].map(([v, l]) => h('option', { value: String(v), selected: v === 24 }, l)));
+  const tools = h('input', { type: 'checkbox' });
+  const result = h('div', { class: 'list' });
+  const active = h('div', { class: 'list' });
+  const loadActive = async () => {
+    const links = await api('GET', `/api/shares?sessionId=${id}`).catch(() => []);
+    active.replaceChildren(...(links.length ? [h('div', { class: 'label' }, 'Links to this chat')] : []), ...links.map(l => h('div', { class: 'row card' },
+      h('span', { class: 'grow small' }, `Until ${new Date(l.expires).toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}${l.tools ? ' · with tool calls' : ''} · opened ${l.views}×`),
+      h('button', { class: 'btn sm danger', onclick: async () => { await api('DELETE', `/api/shares/${l.id}`).catch(x => toast(x.message)); loadActive(); } }, 'Remove'))));
+  };
+  openSheet('Share a read-only link', h('div', { class: 'list' },
+    h('div', { class: 'small muted' }, 'Anyone with the link can read this chat (as it is when they open it) until it expires. They can\'t reply or see anything else.'),
+    h('div', { class: 'row' }, h('span', {}, 'Link lasts'), hours),
+    h('label', { class: 'row small' }, tools, h('span', {}, 'Include tool calls and their output (may show file contents and commands)')),
+    h('button', { class: 'btn primary', onclick: async () => {
+      try {
+        const r = await api('POST', `/api/sessions/${id}/share`, { hours: Number(hours.value), tools: tools.checked });
+        result.replaceChildren(h('div', { class: 'mono small' }, r.url), h('div', { class: 'row' }, copyBtn(r.url, 'Copy link'),
+          navigator.share ? h('button', { class: 'btn', onclick: () => navigator.share({ title: info.title || 'Claude chat', url: r.url }).catch(() => {}) }, 'Share…') : null),
+          h('div', { class: 'small muted' }, 'This is the only time the link is shown.'));
+        loadActive();
+      } catch (x) { toast(x.message); }
+    } }, 'Create link'), result, active));
+  loadActive();
+}
+
+// ---------- a chat as a printable page (Save as PDF from the print dialog) ----------
+async function printView(id, params) {
+  setTop('Print', `#/s/${id}`);
+  view.replaceChildren(h('div', { class: 'muted small' }, 'Preparing…'));
+  const c = await api('GET', `/api/sessions/${id}/export?format=json${params.get('tools') ? '&tools=1' : ''}`);
+  view.replaceChildren(h('div', { class: 'row no-print' }, h('button', { class: 'btn primary', onclick: () => print() }, '🖨 Print or save as PDF'), h('a', { class: 'btn', href: `#/s/${id}` }, 'Back to the chat')),
+    h('article', { class: 'printable' }, md(c.markdown)));
+  setTimeout(() => print(), 400);
+}
+
+// ---------- a shared chat: what someone with a share link sees (no sign-in) ----------
+async function shareView(token) {
+  setTop('Shared chat');
+  $('#conn').hidden = true;
+  view.replaceChildren(h('div', { class: 'muted small' }, 'Loading…'));
+  try {
+    const res = await fetch(`/api/share/${encodeURIComponent(token)}`, { credentials: 'omit' });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || 'This link doesn\'t work.');
+    document.title = `${d.title} · shared chat`;
+    setTop(d.title || 'Shared chat');
+    view.replaceChildren(h('div', { class: 'small muted no-print' }, `Read-only copy, shared from Handoff. The link works until ${new Date(d.expires).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}.`),
+      h('article', { class: 'printable' }, md(d.markdown)));
+  } catch (x) { view.replaceChildren(h('div', { class: 'empty' }, x.message)); }
 }
 
 // ---------- app preview: the dev server Claude is working on, opened on this device ----------
@@ -2276,17 +2408,17 @@ async function sessionView(id, params = new URLSearchParams()) {
   window.addEventListener('handoff-queue', onQueue);
   state.cleanup.push(() => window.removeEventListener('handoff-queue', onQueue));
   api('GET', `/api/sessions/${id}/queue`).then(renderQueue).catch(() => {});
-  const thenBtn = h('button', { class: 'btn sm', type: 'button', title: 'Send this after Claude finishes what it is doing (and after any steps already waiting)', onclick: async () => {
+  const thenBtn = h('button', { class: 'btn then', type: 'button', title: 'Then: send this after Claude finishes what it is doing (and after any steps already waiting)', 'aria-label': 'Then: send after Claude finishes', onclick: async () => {
     const text = ta.value.trim();
     if (!text) { toast('Type the next step first, then tap Then.'); ta.focus(); return; }
     try {
       renderQueue(await api('POST', `/api/sessions/${id}/queue`, { text, ...picks.values() }));
       ta.value = ''; ta.style.height = ''; updateQuick();
     } catch (x) { toast(x.message); }
-  } }, '⏭ Then');
+  } }, '⏭');
   const composer = h('div', { class: 'composer' }, queueBox, notice, quick, photos.strip, photos.input,
-    h('div', { class: 'input-row' }, photos.button, ta, send),
-    h('div', { class: 'opts' }, ...picks.els, thenBtn, forkLabel));
+    h('div', { class: 'input-row' }, photos.button, ta, thenBtn, send),
+    h('div', { class: 'opts' }, ...picks.els, forkLabel));
   const chat = h('div', { class: 'chat' }, findPanel, older, msgs, working, jump, composer);
 
   // Chat / Files / Changes tabs; Files and Changes only when the server has the file browser turned on
@@ -2547,6 +2679,7 @@ async function route() {
     else if (parts[0] === 'new') await newView(params);
     else if (parts[0] === 'api') await tryItView();
     else if (parts[0] === 'usage') await usageView(params);
+    else if (parts[0] === 'print' && parts[1]) await printView(parts[1], params);
     else await homeView();
   } catch (x) {
     if (x.message !== 'unauthorized') view.replaceChildren(h('div', { class: 'empty' }, 'Error: ' + x.message));
@@ -2555,6 +2688,8 @@ async function route() {
 addEventListener('hashchange', route);
 
 async function boot() {
+  // a share link: that one chat, read-only, with no sign-in and nothing else of Handoff
+  if (location.pathname.startsWith('/share/')) return shareView(location.pathname.split('/')[2] || '');
   try { state.me = await api('GET', '/api/me'); }
   catch { return; }
   showWhatsApp(state.me.whatsapp);
