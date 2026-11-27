@@ -127,8 +127,9 @@ test('two prompts sent at once to one session each get their own answer', async 
   ]);
   assert.equal(a.body.text, 'echo: slow:300:plain: first');
   assert.equal(b.body.text, 'echo: plain: second');
-  const busy = call(full.key, 'POST', `/sessions/${id}/messages`, { prompt: 'slow:400:plain: busy' });
-  await new Promise(r => setTimeout(r, 150));
+  // a wide margin: the whole suite runs in parallel, and a busy machine is slow to start the turn
+  const busy = call(full.key, 'POST', `/sessions/${id}/messages`, { prompt: 'slow:2000:plain: busy' });
+  await new Promise(r => setTimeout(r, 400));
   const fail = await call(full.key, 'POST', `/sessions/${id}/messages`, { prompt: 'plain: now', ifBusy: 'fail' });
   assert.equal(fail.status, 409);
   assert.equal(fail.body.error.code, 'session_busy');
