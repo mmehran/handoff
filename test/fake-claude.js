@@ -33,6 +33,16 @@ if (oneShot) {
     process.stdout.write('```\nFake commit message\n\nRead ' + input.length + ' characters' + (args.includes('--tools') ? ', no tools' : '') + '.\n```\n');
   });
 }
+// a plain prompt with stream-json output (Handoff's limit check): report the plan's limits, answer, exit
+const limitCheck = opt('--output-format') === 'stream-json' && !opt('--input-format');
+if (limitCheck) {
+  process.stdin.resume().on('end', () => {
+    const now = Math.floor(Date.now() / 1000);
+    process.stdout.write(JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', resetsAt: now + 3600, rateLimitType: 'five_hour', utilization: 0.42,
+      unifiedWindows: { five_hour: { utilization: 0.42, resetsAt: now + 3600, status: 'allowed' }, seven_day: { utilization: 0.8, resetsAt: now + 3 * 86400, status: 'allowed_warning' } } } }) + '\n');
+    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'OK' }) + '\n');
+  });
+}
 const resume = opt('--resume');
 const fork = args.includes('--fork-session');
 const persist = !args.includes('--no-session-persistence');
@@ -60,7 +70,7 @@ let abort = null;        // ends the running turn early (interrupt)
 let totalCost = 0;
 const queue = [];
 let busy = false;
-const rl = oneShot ? null : readline.createInterface({ input: process.stdin });
+const rl = oneShot || limitCheck ? null : readline.createInterface({ input: process.stdin });
 rl?.on('line', line => {
   const m = JSON.parse(line);
   if (m.type === 'control_request' && m.request.subtype === 'interrupt') {

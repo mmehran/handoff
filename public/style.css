@@ -522,3 +522,19 @@ input.reauth { width: 12em; flex: none; }
 
 /* ---------- app preview ---------- */
 button.preview-port.card { width: 100%; text-align: left; margin: 0; }
+
+/* ---------- usage and limits ---------- */
+.usage-limits { display: flex; flex-direction: column; gap: 12px; margin-bottom: 14px; }
+.limit { display: flex; flex-direction: column; gap: 5px; }
+.limit .row { gap: 6px; }
+.limit-bar { height: 8px; border-radius: 99px; background: var(--surface-3); overflow: hidden; }
+.limit-bar span { display: block; height: 100%; background: var(--ok); border-radius: inherit; }
+.limit-bar.warn span { background: var(--warn); }
+.limit-bar.full span { background: var(--err); }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 8px; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
+.stat-n { font-size: 22px; font-weight: 650; margin: 2px 0; }
+.seg { gap: 6px; margin: 14px 0 4px; }
+.usage-chart { display: flex; align-items: flex-end; gap: 2px; height: 120px; padding: 6px 0; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.usage-col { flex: 1; height: 100%; display: flex; align-items: flex-end; min-width: 2px; }
+.usage-col span { display: block; width: 100%; background: var(--accent); border-radius: 3px 3px 0 0; }

@@ -382,6 +382,19 @@ export function createWeb(core, { log = console.log, preview = null } = {}) {
     json(res, 200, r);
   });
 
+  // ---------- usage: tokens, estimated cost and the plan's limits ----------
+  route('GET', /^\/api\/usage$/, async (req, res, ctx) => {
+    const days = [1, 7, 30, 90].includes(Number(ctx.url.searchParams.get('days'))) ? Number(ctx.url.searchParams.get('days')) : 30;
+    json(res, 200, { ...(await core.usage.report({ days })), limits: core.limits.view() });
+  });
+  // "Check now": one tiny request so Claude Code reports the limits as they are this minute
+  let checking = null;
+  route('POST', /^\/api\/usage\/limits$/, async (req, res, ctx) => {
+    audit(ctx.ip, 'limits_check');
+    const info = await (checking ||= runner.checkLimits().finally(() => { checking = null; }));
+    json(res, 200, { reported: !!info, limits: core.limits.view() });
+  });
+
   // ---------- app preview (HANDOFF_PREVIEW_HOSTNAME) ----------
   // what could be previewed: ports the session's chat mentions, and everything listening on the computer
   route('GET', /^\/api\/preview$/, async (req, res, ctx) => {

@@ -324,6 +324,7 @@ $('#menu').addEventListener('click', () => {
         try { await api('POST', '/api/notify/test'); toast('Test WhatsApp message sent'); }
         catch (x) { toast('WhatsApp: ' + x.message, 6000); }
       } }, '💬 Send test WhatsApp') : null,
+      h('button', { class: 'btn', onclick: () => { close(); location.hash = '#/usage'; } }, '📊 Usage and limits'),
       h('button', { class: 'btn', onclick: () => { close(); showApiSettings(); } }, '🔑 API access…'),
       h('button', { class: 'btn', onclick: async () => { await api('POST', '/api/logout'); location.reload(); } }, '↪ Sign out'),
       h('button', { class: 'btn danger', onclick: () => { close(); signOutEverywhere(); } }, '⏻ Sign out all devices')));
@@ -571,6 +572,91 @@ async function showApiSettings() {
   };
 
   try { await load(); } catch (x) { say(h('div', { class: 'empty' }, x.message)); }
+}
+
+// ---------- usage: tokens, estimated cost and the plan's limits ----------
+const tokens = n => (n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'K' : String(n));
+const until = ms => {
+  const m = Math.max(0, Math.round((ms - Date.now()) / 60e3));
+  return m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${Math.round(m / 1440)} days`;
+};
+const LIMIT_NAMES = {
+  five_hour: ['Current session', 'the 5-hour window'],
+  seven_day: ['This week', 'all models'],
+  seven_day_opus: ['This week', 'Opus'],
+  seven_day_sonnet: ['This week', 'Sonnet'],
+  seven_day_overage_included: ['This week', 'with extra usage']
+};
+function limitCard(l, onCheck) {
+  const names = Object.keys(l.windows).sort((a, b) => Object.keys(LIMIT_NAMES).indexOf(a) - Object.keys(LIMIT_NAMES).indexOf(b));
+  const rows = names.map(n => {
+    const w = l.windows[n], pct = Math.round((w.utilization || 0) * 100);
+    const [title, sub] = LIMIT_NAMES[n] || [n.replace(/_/g, ' '), ''];
+    const when = w.resetsAt ? new Date(w.resetsAt) : null;
+    const resets = !when ? '' : w.reset
+      ? `Reset at ${when.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}; not used since it was checked`
+      : `Resets ${n === 'five_hour' ? when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : when.toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })} (in ${until(w.resetsAt)})`;
+    const bar = h('div', { class: 'limit-bar' }, h('span', {}));
+    bar.firstChild.style.width = Math.min(100, pct) + '%';
+    bar.classList.toggle('warn', pct >= 75 || w.status === 'allowed_warning');
+    bar.classList.toggle('full', pct >= 100 || w.status === 'rejected');
+    return h('div', { class: 'limit' },
+      h('div', { class: 'row' }, h('b', {}, title), sub ? h('span', { class: 'muted small' }, sub) : null, h('span', { class: 'grow' }), h('b', {}, `${pct}% used`)),
+      bar, h('div', { class: 'small muted' }, resets));
+  });
+  const check = h('button', { class: 'btn sm', onclick: async () => { check.disabled = true; check.textContent = 'Checking…'; try { await onCheck(); } finally { check.disabled = false; check.textContent = 'Check now'; } } }, 'Check now');
+  return h('div', { class: 'card usage-limits' },
+    h('div', { class: 'row' }, h('b', {}, 'Plan limits'), h('span', { class: 'grow' }), check),
+    ...(rows.length ? rows : [h('div', { class: 'muted small' }, 'Not known yet. Claude Code reports them with each run Handoff starts; tap Check now to ask (one tiny request to the quickest model).')]),
+    l.at ? h('div', { class: 'small muted' }, `As of ${ago(l.at)}. Sessions in Claude Desktop use the same limits but only report them to the app itself.`) : null);
+}
+
+async function usageView(params) {
+  setTop('Usage and limits', '#/');
+  state.activeProject = null; markActive();
+  const days = [1, 7, 30, 90].includes(Number(params.get('days'))) ? Number(params.get('days')) : 30;
+  view.replaceChildren(h('div', { class: 'muted small' }, 'Adding up the transcripts… (the first time takes a little while)'));
+  const gen = state.gen;
+  let d;
+  try { d = await api('GET', `/api/usage?days=${days}`); } catch (x) { return view.replaceChildren(h('div', { class: 'empty' }, x.message)); }
+  if (gen !== state.gen) return;
+  const render = () => {
+    const tile = (label, x) => h('div', { class: 'stat' }, h('div', { class: 'small muted' }, label), h('div', { class: 'stat-n' }, money(x.cost)), h('div', { class: 'small muted' }, `${tokens(x.tokens.total)} tokens · ${x.tokens.replies} replies`));
+    const max = Math.max(...d.byDay.map(x => x.cost), 0.0001);
+    const chart = h('div', { class: 'usage-chart', role: 'img', 'aria-label': `Estimated cost per day, last ${days} days` },
+      ...d.byDay.map(x => {
+        const b = h('div', { class: 'usage-col', title: `${x.day}: ${money(x.cost)} · ${tokens(x.tokens.total)} tokens` }, h('span', {}));
+        b.firstChild.style.height = Math.max(x.cost ? 2 : 0, Math.round(x.cost / max * 100)) + '%';
+        return b;
+      }));
+    const range = h('div', { class: 'row seg' }, ...[[1, 'Today'], [7, '7 days'], [30, '30 days'], [90, '90 days']].map(([n, label]) =>
+      h('a', { class: 'btn sm' + (n === days ? ' primary' : ''), href: `#/usage?days=${n}` }, label)));
+    const breakdown = x => `${tokens(x.tokens.input)} in · ${tokens(x.tokens.output)} out · ${tokens(x.tokens.cacheRead)} cache read · ${tokens(x.tokens.cacheWrite)} cache write`;
+    view.replaceChildren(
+      limitCard(d.limits, async () => {
+        try { const r = await api('POST', '/api/usage/limits'); d.limits = r.limits; if (!r.reported) toast('Claude Code answered but didn\'t report limits.', 5000); render(); }
+        catch (x) { toast(x.message, 6000); }
+      }),
+      h('div', { class: 'stats' }, tile('Last 5 hours', d.totals.fiveHours), tile('Today', d.totals.today), tile('Last 7 days', d.totals.week)),
+      h('div', { class: 'small muted' }, 'Cost is an estimate at API list prices, for every Claude Code session on this computer (Desktop, terminal, IDE and Handoff). A Pro or Max plan isn\'t billed per token.'),
+      range,
+      h('h2', {}, days === 1 ? 'Today' : `Last ${days} days: ${money(d.totals.range.cost)}`),
+      days > 1 ? chart : null,
+      h('div', { class: 'small muted' }, breakdown(d.totals.range)),
+      h('h2', {}, 'By model'),
+      h('div', { class: 'list' }, ...(d.byModel.length ? d.byModel.map(m => h('div', { class: 'card' },
+        h('div', { class: 't' }, m.model, h('span', { class: 'muted' }, ` · ${money(m.cost)}${m.priced ? '' : ' (price unknown)'}`)),
+        h('div', { class: 's' }, breakdown(m)))) : [h('div', { class: 'empty' }, 'Nothing in this period.')])),
+      h('h2', {}, 'By project'),
+      h('div', { class: 'list' }, ...d.byProject.map(p => h('a', { class: 'card', href: `#/p/${encodeURIComponent(p.key)}` },
+        h('div', { class: 't' }, p.name, h('span', { class: 'muted' }, ` · ${money(p.cost)}`)),
+        h('div', { class: 's' }, `${tokens(p.tokens.total)} tokens · ${p.tokens.replies} replies`)))),
+      h('h2', {}, 'Heaviest chats'),
+      h('div', { class: 'list' }, ...d.bySession.map(s => h('a', { class: 'card', href: `#/s/${s.id}` },
+        h('div', { class: 't' }, s.title, h('span', { class: 'muted' }, ` · ${money(s.cost)}`)),
+        h('div', { class: 's' }, `${s.project} · ${tokens(s.tokens.total)} tokens${s.last ? ' · ' + ago(s.last) : ''}`)))));
+  };
+  render();
 }
 
 // ---------- "Try it": the API itself, from this page, with a key pasted here ----------
@@ -2387,6 +2473,7 @@ async function route() {
     else if (parts[0] === 's' && parts[1]) await sessionView(parts[1], params);
     else if (parts[0] === 'new') await newView(params);
     else if (parts[0] === 'api') await tryItView();
+    else if (parts[0] === 'usage') await usageView(params);
     else await homeView();
   } catch (x) {
     if (x.message !== 'unauthorized') view.replaceChildren(h('div', { class: 'empty' }, 'Error: ' + x.message));

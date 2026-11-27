@@ -203,6 +203,7 @@ export class Notifier {
     if (this.seen) {
       for (const [id, l] of now) {
         if (this.runner.bySession(id)) continue; // our own sessions are reported from runner events
+        if (this.runner.quietPids?.has(l.pid)) continue; // a one-off of ours (commit message, limit check)
         const before = this.seen.get(id);
         if (l.status === 'waiting') {
           // Claude asked a multiple-choice question: send it with its options, once per question

@@ -34,6 +34,9 @@ export class Runner extends EventEmitter {
     this.claudePath = claudePath;
     this.runs = new Map();        // runId -> run
     this.permissions = new Map(); // permId -> {run, requestId, ...}
+    // one-off processes (commit messages, limit checks): Claude Code lists them as running sessions
+    // too, so alerts leave them out
+    this.quietPids = new Set();
     this.reaper = setInterval(() => this.reap(), 30e3);
     this.reaper.unref?.();
   }
@@ -125,6 +128,7 @@ export class Runner extends EventEmitter {
       try { proc = spawn(cmd, [...pre, ...args], { cwd: os.tmpdir(), env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }); }
       catch (e) { return reject(httpErr(500, `couldn't start Claude: ${e.message}`)); }
       let out = '', err = '';
+      this.quiet(proc);
       const timer = setTimeout(() => { try { proc.kill(); } catch { /* gone */ } reject(httpErr(504, 'Claude took too long to answer')); }, timeout);
       proc.stdout.setEncoding('utf8').on('data', d => { out += d; });
       proc.stderr.setEncoding('utf8').on('data', d => { err = (err + d).slice(-2000); });
@@ -142,6 +146,49 @@ export class Runner extends EventEmitter {
     });
     // --restricted is newer than some installs: without it, --tools '' still leaves no tools
     return attempt(true).catch(e => (e.unknownOption ? attempt(false) : Promise.reject(e)));
+  }
+
+  quiet(proc) {
+    if (!proc?.pid) return;
+    this.quietPids.add(proc.pid);
+    proc.on('exit', () => setTimeout(() => this.quietPids.delete(proc.pid), 60e3).unref?.());
+  }
+
+  // The plan's limits right now: the smallest possible request to the quickest model, only to read the
+  // rate_limit_event Claude Code prints about it. Resolves to that event's info, or null.
+  checkLimits({ timeout = 90e3 } = {}) {
+    return new Promise((resolve, reject) => {
+      let cmd = this.claudePath, pre = [];
+      if (/\.(c|m)?js$/i.test(cmd)) { pre = [cmd]; cmd = process.execPath; }
+      const env = cleanEnv();
+      if (this.cfg.claudeOauthToken) env.CLAUDE_CODE_OAUTH_TOKEN = this.cfg.claudeOauthToken;
+      const args = ['-p', '--output-format', 'stream-json', '--verbose', '--no-session-persistence', '--tools', '', '--model', 'haiku'];
+      let proc;
+      try { proc = spawn(cmd, [...pre, ...args], { cwd: os.tmpdir(), env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }); }
+      catch (e) { return reject(httpErr(500, `couldn't start Claude: ${e.message}`)); }
+      this.quiet(proc);
+      let buf = '', info = null, error = '';
+      const timer = setTimeout(() => { try { proc.kill(); } catch { /* gone */ } }, timeout);
+      proc.stdout.setEncoding('utf8').on('data', d => {
+        buf += d;
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, i); buf = buf.slice(i + 1);
+          let m; try { m = JSON.parse(line); } catch { continue; }
+          if (m.type === 'rate_limit_event' && m.rate_limit_info) { info = m.rate_limit_info; this.emit('rate_limit', info); }
+          if (m.type === 'result' && m.is_error) error = String(m.result || m.subtype || 'error').slice(0, 300);
+        }
+      });
+      proc.stderr.on('data', () => {});
+      proc.on('error', e => { clearTimeout(timer); reject(httpErr(500, `couldn't start Claude: ${e.message}`)); });
+      proc.on('exit', () => {
+        clearTimeout(timer);
+        if (!info && error) return reject(httpErr(502, `Claude couldn't answer: ${error}`));
+        resolve(info);
+      });
+      proc.stdin.on('error', () => {});
+      proc.stdin.end('Reply with OK.');
+    });
   }
 
   publicRun(r) {
@@ -311,6 +358,8 @@ export class Runner extends EventEmitter {
       run.status = 'running';
       run._resolve(m.session_id);
       this.emitRun(run);
+    } else if (m.type === 'rate_limit_event') {
+      this.emit('rate_limit', m.rate_limit_info); // the plan's 5-hour and weekly windows (usage page)
     } else if (m.type === 'stream_event') {
       this.emit('partial', run, m); // a piece of the answer as it's written (--include-partial-messages)
     } else if (m.type === 'control_request') {

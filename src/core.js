@@ -17,6 +17,7 @@ import { Activity } from './activity.js';
 import { FolderPicker } from './folders.js';
 import { needsHttp } from './services.js';
 import { KeyStore } from './apikeys.js';
+import { Usage, Limits } from './usage.js';
 
 export function createCore(cfg, { claudePath, log = console.log } = {}) {
   const store = new Store(cfg);
@@ -98,6 +99,15 @@ export function createCore(cfg, { claudePath, log = console.log } = {}) {
   // API keys (and what is remembered about their use); the web app manages them too
   const keys = new KeyStore({ cfg });
 
-  const stop = () => { clearTimeout(searchTimer); runner.shutdown(); notifier.stop(); keys.flush(); };
-  return { cfg, store, runner, push, notifier, events, audit, answerQuestion, files, activity, folderPicker, search, keys, stop, log };
+  // Usage page: tokens and cost from the transcripts, and the plan's limits as Claude Code reports them
+  // on every run Handoff drives
+  const usage = new Usage({ store, dataDir: DATA_DIR, log });
+  const limits = new Limits({ dataDir: DATA_DIR });
+  runner.on('rate_limit', info => limits.update(info));
+  // the first count reads every transcript (can take half a minute): do it before anyone asks
+  const usageTimer = cfg.web ? setTimeout(() => usage.update().catch(e => log(`[usage] ${e.message}`)), 30e3) : null;
+  usageTimer?.unref?.();
+
+  const stop = () => { clearTimeout(searchTimer); clearTimeout(usageTimer); runner.shutdown(); notifier.stop(); keys.flush(); };
+  return { cfg, store, runner, push, notifier, events, audit, answerQuestion, files, activity, folderPicker, search, keys, usage, limits, stop, log };
 }
