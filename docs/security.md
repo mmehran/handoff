@@ -117,6 +117,28 @@ The API (`HANDOFF_API`, off by default) lets programs drive Claude Code on this 
 
 **The Swagger page** (`/api/v1/docs`) and `/api/v1/openapi.json` are public, as no secrets are in them. The page loads Swagger UI from jsDelivr at a fixed version, under its own Content-Security-Policy.
 
+## App preview
+
+Off unless `HANDOFF_PREVIEW_HOSTNAME` is set (see [docs/preview.md](preview.md)).
+
+- The previewed app is served from **its own hostname**, never from Handoff's, so its pages and scripts can't read Handoff's cookies or call Handoff's API as you.
+- Opening a preview needs a signed-in Handoff session: it hands out a one-time ticket (2 minutes), which becomes a cookie for the preview host only, good for 12 hours and **one port**. Without it the preview host answers 401.
+- Only ports 1024–65535 on this computer (`127.0.0.1` / `::1`), and never Handoff's own port, the WhatsApp sender's or Docker's (2375, 2376).
+- The preview cookie is removed before the request reaches your app. **Sign out all devices** ends every preview.
+- Anything your dev server serves is visible to whoever holds that cookie, so don't preview something you wouldn't open on your phone.
+
+## Shared chats
+
+- A share link shows **one chat, read-only**, to anyone who has it, until it expires (1 hour to 30 days) or is removed.
+- Only the SHA-256 of the link is kept (`data/shares.json`). The page shows the project's name, not its folder, and leaves out tool calls and their output unless you tick them in.
+- `/api/share/…` is rate-limited like sign-in, and shared pages send `X-Robots-Tag: noindex`.
+- **Sign out all devices** with "Also revoke…" ticked removes every share link.
+
+## Laptop and usage
+
+- **Keep awake** runs a small helper (`SetThreadExecutionState` on Windows, `caffeinate` on macOS, `systemd-inhibit` on Linux) that stops when Handoff stops. It doesn't change power settings and can't stop sleep when the lid closes.
+- **Usage** is counted from the transcripts on this computer; nothing is sent anywhere. **Plan limits** come from Claude Code's own output when Handoff runs it; "Check now" sends Claude one tiny prompt that isn't saved as a chat.
+
 ## Secrets at rest
 
 | Secret | Where | If it leaks |
@@ -127,6 +149,7 @@ The API (`HANDOFF_API`, off by default) lets programs drive Claude Code on this 
 | WhatsApp linked-device keys | Docker volume `wa-auth` | Remove the linked device on the phone; `docker compose down -v`. |
 | Cloudflare API token | **never stored** | Delete it in Cloudflare after setup. |
 | API keys | only their SHA-256, in `data/api-keys.json` | Revoke the key (web app or `node scripts/api-key.js revoke`). |
+| Share links | only their SHA-256, in `data/shares.json` | Remove it from the chat's Share sheet, or Sign out all devices with Revoke ticked. |
 | Webhook secrets | `data/api-keys.json` | Revoke the key and make a new one. |
 
 `.env` and `data/` are git-ignored. Don't commit them, paste them into issues, or include them in screenshots.

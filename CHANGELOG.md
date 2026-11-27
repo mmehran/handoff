@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.6.0 (2026-11-27)
+
+### Added
+- **Preview the app Claude is building, on your phone** (`HANDOFF_PREVIEW_HOSTNAME`): pick a dev server running on the computer (found automatically, or the port Claude mentioned) and it opens on its own hostname behind your Handoff sign-in, with live reload. `npm run setup:domain -- --preview <host>` adds the hostname to the tunnel. See docs/preview.md.
+- **Usage and limits** (menu → Usage and limits): tokens and estimated cost per day, project, session and model, read from the transcripts, and how much of the 5-hour and weekly plan limits is used, with when each resets. See docs/usage.md.
+- **Chained prompts:** ⏭ Then queues the next steps ("run the tests", "then commit"). Each is sent when Claude finishes the last one; the chain pauses on an error or a question, and steps can be reordered, removed or paused. The "finished" alert waits for the last step.
+- **Laptop status:** battery, charging, idle time and when the computer will sleep, and a keep-awake switch (off, while Claude works, or always). See docs/laptop.md.
+- **Organise and share:** rename, pin, tag and archive chats in Handoff (Claude's files are untouched); export a chat as Markdown or PDF; share a read-only link that expires. See docs/organise.md.
+
+### Changed
+- One-off runs Handoff makes for itself (commit messages, the limits check) no longer send "finished" alerts.
+- **Sign out all devices** also ends previews, and with Revoke ticked removes share links.
+
 ## 1.5.0 (2026-11-26)
 
 ### Added
