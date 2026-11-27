@@ -89,6 +89,23 @@ test('limits: windows from rate_limit_event, a passed reset shows as started aga
   assert.equal(new Limits({ dataDir: path.join(tmp, 'limits-a') }).view(now).windows.seven_day.utilization, 0.9, 'kept on disk');
 });
 
+test('limits: the top-level summary (reset time only) does not blank the usage the per-window list reported', () => {
+  const l = new Limits({ dataDir: path.join(tmp, 'limits-c') });
+  const s = Math.floor(now / 1000);
+  // as Claude Code sends it: the summary for five_hour has a reset time but no utilization
+  const report = { status: 'allowed', resetsAt: s + 3600, rateLimitType: 'five_hour', overageStatus: 'rejected', unifiedWindows: { five_hour: { utilization: 0.26, resetsAt: s + 3600, status: 'allowed' }, seven_day: { utilization: 0.13, resetsAt: s + 86400, status: 'allowed' } } };
+  l.update(report, now);
+  assert.equal(l.view(now).windows.five_hour.utilization, 0.26);
+  assert.equal(l.view(now).windows.five_hour.resetsAt, (s + 3600) * 1000);
+  assert.equal(l.view(now).windows.seven_day.utilization, 0.13);
+  // a later report with only the summary keeps the known usage for the same window...
+  l.update({ status: 'allowed', resetsAt: s + 3600, rateLimitType: 'five_hour' }, now + 1000);
+  assert.equal(l.view(now).windows.five_hour.utilization, 0.26);
+  // ...but not for the next window, whose usage isn't known
+  l.update({ status: 'allowed', resetsAt: s + 9000, rateLimitType: 'five_hour' }, now + 2000);
+  assert.equal(l.view(now).windows.five_hour.utilization, null);
+});
+
 test('"Check now" runs one tiny request and reads the limits Claude Code reports', async () => {
   const cfg = loadConfig();
   cfg.claudeHome = home;

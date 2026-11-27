@@ -205,12 +205,24 @@ export class Limits {
 
   update(info, at = Date.now()) {
     if (!info || typeof info !== 'object') return;
-    const w = { ...this.state.windows };
+    const w = { ...this.state.windows }, fresh = new Set();
+    // Fill in what this report says about a window without blanking what it already said: the per-window
+    // list has the usage, while the top-level summary for the same window often has only its reset time.
     const put = (name, x) => {
       if (!x || typeof x !== 'object') return;
-      const utilization = Number(x.utilization), resetsAt = Number(x.resetsAt);
-      if (!Number.isFinite(utilization) && !Number.isFinite(resetsAt)) return;
-      w[name] = { utilization: Number.isFinite(utilization) ? utilization : null, resetsAt: Number.isFinite(resetsAt) ? resetsAt * 1000 : null, status: x.status || null, at };
+      const u = x.utilization == null ? NaN : Number(x.utilization), r = x.resetsAt == null ? NaN : Number(x.resetsAt);
+      if (!Number.isFinite(u) && !Number.isFinite(r)) return;
+      const resetsAt = Number.isFinite(r) ? r * 1000 : null;
+      const old = w[name];
+      // an earlier value counts only for the same window: from this report, or an earlier one with the same reset
+      const keep = old && (fresh.has(name) || (resetsAt && old.resetsAt === resetsAt)) ? old : null;
+      w[name] = {
+        utilization: Number.isFinite(u) ? u : keep?.utilization ?? null,
+        resetsAt: resetsAt ?? keep?.resetsAt ?? null,
+        status: (fresh.has(name) && keep?.status) || x.status || keep?.status || null,
+        at
+      };
+      fresh.add(name);
     };
     for (const [name, x] of Object.entries(info.unifiedWindows || {})) put(name, x);
     if (info.rateLimitType) put(info.rateLimitType, info);

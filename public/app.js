@@ -591,7 +591,7 @@ const LIMIT_NAMES = {
 function limitCard(l, onCheck) {
   const names = Object.keys(l.windows).sort((a, b) => Object.keys(LIMIT_NAMES).indexOf(a) - Object.keys(LIMIT_NAMES).indexOf(b));
   const rows = names.map(n => {
-    const w = l.windows[n], pct = Math.round((w.utilization || 0) * 100);
+    const w = l.windows[n], known = typeof w.utilization === 'number', pct = known ? Math.round(w.utilization * 100) : 0;
     const [title, sub] = LIMIT_NAMES[n] || [n.replace(/_/g, ' '), ''];
     const when = w.resetsAt ? new Date(w.resetsAt) : null;
     const resets = !when ? '' : w.reset
@@ -602,7 +602,7 @@ function limitCard(l, onCheck) {
     bar.classList.toggle('warn', pct >= 75 || w.status === 'allowed_warning');
     bar.classList.toggle('full', pct >= 100 || w.status === 'rejected');
     return h('div', { class: 'limit' },
-      h('div', { class: 'row' }, h('b', {}, title), sub ? h('span', { class: 'muted small' }, sub) : null, h('span', { class: 'grow' }), h('b', {}, `${pct}% used`)),
+      h('div', { class: 'row' }, h('b', {}, title), sub ? h('span', { class: 'muted small' }, sub) : null, h('span', { class: 'grow' }), h('b', {}, known ? `${pct}% used` : 'usage not reported')),
       bar, h('div', { class: 'small muted' }, resets));
   });
   const check = h('button', { class: 'btn sm', onclick: async () => { check.disabled = true; check.textContent = 'Checking…'; try { await onCheck(); } finally { check.disabled = false; check.textContent = 'Check now'; } } }, 'Check now');
