@@ -325,6 +325,7 @@ $('#menu').addEventListener('click', () => {
         catch (x) { toast('WhatsApp: ' + x.message, 6000); }
       } }, '💬 Send test WhatsApp') : null,
       h('button', { class: 'btn', onclick: () => { close(); location.hash = '#/usage'; } }, '📊 Usage and limits'),
+      h('button', { class: 'btn', onclick: () => { close(); showLaptop(); } }, '💻 Laptop: battery and keep awake…'),
       h('button', { class: 'btn', onclick: () => { close(); showApiSettings(); } }, '🔑 API access…'),
       h('button', { class: 'btn', onclick: async () => { await api('POST', '/api/logout'); location.reload(); } }, '↪ Sign out'),
       h('button', { class: 'btn danger', onclick: () => { close(); signOutEverywhere(); } }, '⏻ Sign out all devices')));
@@ -657,6 +658,41 @@ async function usageView(params) {
         h('div', { class: 's' }, `${s.project} · ${tokens(s.tokens.total)} tokens${s.last ? ' · ' + ago(s.last) : ''}`)))));
   };
   render();
+}
+
+// ---------- the laptop: battery, when it would sleep, keep awake ----------
+const mins = m => (m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`);
+const batteryLine = b => !b ? 'No battery' : `${b.percent}% · ${b.charging ? 'charging' : b.plugged ? 'plugged in' : 'on battery'}${!b.plugged && b.minutesLeft ? ` · about ${mins(b.minutesLeft)} left` : ''}`;
+const KEEP = [
+  ['off', 'Off', 'The computer sleeps as Windows is set up to.'],
+  ['working', 'While Claude works', 'Awake while any session is busy or waiting for you, and 10 minutes after.'],
+  ['always', 'Always', 'Awake until you turn this off.']
+];
+async function showLaptop() {
+  const body = h('div', { class: 'list laptop' }, h('div', { class: 'muted small' }, 'Asking the computer…'));
+  openSheet('Laptop', body);
+  const render = s => {
+    const k = s.keepAwake, sl = s.sleep;
+    const sleepText = !sl ? null
+      : sl.afterMinutes === 0 && !sl.hibernateAfterMinutes ? 'Never sleeps by itself (its power setting).'
+      : [sl.afterMinutes ? `Sleeps after ${mins(sl.afterMinutes)} idle` : null, sl.hibernateAfterMinutes ? `hibernates after ${mins(sl.hibernateAfterMinutes)}` : null].filter(Boolean).join(', ') + (sl.onBattery ? ' (on battery).' : '.')
+        + (k.active ? ' Handoff is keeping it awake now.' : sl.inMinutes != null ? ` Idle for ${mins(sl.idleMinutes)}: it would sleep in about ${mins(sl.inMinutes)}.` : '');
+    const awake = !k.supported ? 'Keeping awake isn\'t supported on this system.'
+      : !k.active ? 'Not keeping it awake right now.'
+      : k.graceUntil && k.graceUntil > Date.now() && k.mode === 'working' ? `Awake: Claude is working, or stopped less than 10 minutes ago (until about ${new Date(k.graceUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} if nothing else happens).`
+      : `Awake since ${new Date(k.since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`;
+    const set = async mode => { try { render(await api('POST', '/api/laptop/keep-awake', { mode })); } catch (x) { toast(x.message); } };
+    body.replaceChildren(
+      h('div', { class: 'card' }, h('div', { class: 't' }, s.battery && !s.battery.plugged && s.battery.percent <= 20 ? '🪫 ' : '🔋 ', batteryLine(s.battery)),
+        sleepText ? h('div', { class: 's wrap' }, sleepText) : null,
+        sl?.lid && sl.lid !== 'nothing' ? h('div', { class: 's wrap' }, `Closing the lid: ${sl.lid === 'sleep' ? 'sleeps' : sl.lid === 'hibernate' ? 'hibernates' : 'shuts down'}, even while kept awake.`) : null),
+      h('div', { class: 'label' }, 'Keep awake'),
+      h('div', { class: 'list' }, ...KEEP.map(([mode, label, text]) => h('button', { class: 'card keep' + (k.mode === mode ? ' on' : ''), 'aria-pressed': String(k.mode === mode), onclick: () => set(mode) },
+        h('div', { class: 't' }, (k.mode === mode ? '● ' : '○ ') + label), h('div', { class: 's wrap' }, text)))),
+      h('div', { class: 'small muted' }, awake),
+      h('div', { class: 'small muted' }, `${s.host.name} · up ${mins(Math.round(s.host.uptime / 60))} · ${Math.round(s.host.memory.free / 1e9)} of ${Math.round(s.host.memory.total / 1e9)} GB memory free`));
+  };
+  try { render(await api('GET', '/api/laptop')); } catch (x) { body.replaceChildren(h('div', { class: 'empty' }, x.message)); }
 }
 
 // ---------- "Try it": the API itself, from this page, with a key pasted here ----------
@@ -1225,8 +1261,14 @@ async function homeView() {
     ? h('div', { class: 'welcome' }, h('div', { class: 'welcome-icon' }), h('h1', {}, 'Pick up where Claude left off'),
         h('p', { class: 'muted' }, 'Open a live session or a project on the left, search every chat above, or start something new.'))
     : h('div', {}, h('h2', {}, 'Live now'), live, h('h2', {}, 'Projects'), filter, projList);
+  // the laptop at a glance: battery and whether it's kept awake; opens the Laptop sheet
+  const laptopChip = h('button', { class: 'btn sm laptop-chip', hidden: true, title: 'Battery and keep awake', onclick: () => showLaptop() });
+  api('GET', '/api/laptop').then(s => {
+    laptopChip.textContent = `💻 ${s.battery ? batteryLine(s.battery).split(' · ').slice(0, 2).join(' · ') : 'Laptop'}${s.keepAwake.active ? ' · kept awake' : ''}`;
+    laptopChip.hidden = false;
+  }).catch(() => {});
   view.replaceChildren(...[
-    twoPane() ? null : h('div', { class: 'row' }, h('a', { href: '#/new', class: 'btn primary' }, '＋ New session'), h('span', { class: 'grow' })),
+    h('div', { class: 'row' }, twoPane() ? null : h('a', { href: '#/new', class: 'btn primary' }, '＋ New session'), h('span', { class: 'grow' }), laptopChip),
     ...(find ? [find, results] : []), normal].filter(Boolean));
   if (find) {
     let timer, seq = 0;

@@ -399,6 +399,16 @@ export function createWeb(core, { log = console.log, preview = null } = {}) {
   route('POST', /^\/api\/sessions\/([0-9a-f-]{36})\/queue\/pause$/, async (req, res, ctx, m) => json(res, 200, queue.pause(m[1], !!(await readJson(req)).paused)));
   route('DELETE', /^\/api\/sessions\/([0-9a-f-]{36})\/queue$/, (req, res, ctx, m) => { audit(ctx.ip, 'queue_clear', { sessionId: m[1] }); json(res, 200, queue.clear(m[1])); });
 
+  // ---------- the laptop: battery, sleep, keep awake ----------
+  core.laptop.on('change', () => broadcast('laptop', core.laptop.keepAwake()));
+  route('GET', /^\/api\/laptop$/, async (req, res) => json(res, 200, await core.laptop.status()));
+  route('POST', /^\/api\/laptop\/keep-awake$/, async (req, res, ctx) => {
+    const b = await readJson(req);
+    const r = await core.laptop.setMode(String(b.mode || ''));
+    audit(ctx.ip, 'keep_awake', { mode: r.mode });
+    json(res, 200, await core.laptop.status());
+  });
+
   // ---------- usage: tokens, estimated cost and the plan's limits ----------
   route('GET', /^\/api\/usage$/, async (req, res, ctx) => {
     const days = [1, 7, 30, 90].includes(Number(ctx.url.searchParams.get('days'))) ? Number(ctx.url.searchParams.get('days')) : 30;

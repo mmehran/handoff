@@ -19,6 +19,7 @@ import { needsHttp } from './services.js';
 import { KeyStore } from './apikeys.js';
 import { Usage, Limits } from './usage.js';
 import { PromptQueue } from './queue.js';
+import { Laptop } from './laptop.js';
 
 export function createCore(cfg, { claudePath, log = console.log } = {}) {
   const store = new Store(cfg);
@@ -116,6 +117,13 @@ export function createCore(cfg, { claudePath, log = console.log } = {}) {
   });
   notifier.moreQueued = id => queue.pending(id) > 0 && !queue.view(id).paused;
 
+  // Laptop status, and keeping it awake (off / while Claude works / always). "Working": any session
+  // Handoff runs, or one open on the computer, is busy or waiting for you.
+  const laptop = new Laptop({
+    dataDir: DATA_DIR, log,
+    isWorking: async () => runner.list().some(r => r.status !== 'idle') || (await store.liveSessions()).some(l => l.status !== 'idle')
+  });
+
   // Usage page: tokens and cost from the transcripts, and the plan's limits as Claude Code reports them
   // on every run Handoff drives
   const usage = new Usage({ store, dataDir: DATA_DIR, log });
@@ -125,6 +133,6 @@ export function createCore(cfg, { claudePath, log = console.log } = {}) {
   const usageTimer = cfg.web ? setTimeout(() => usage.update().catch(e => log(`[usage] ${e.message}`)), 30e3) : null;
   usageTimer?.unref?.();
 
-  const stop = () => { clearTimeout(searchTimer); clearTimeout(usageTimer); queue.stop(); runner.shutdown(); notifier.stop(); keys.flush(); };
-  return { cfg, store, runner, push, notifier, events, audit, answerQuestion, files, activity, folderPicker, search, keys, usage, limits, queue, stop, log };
+  const stop = () => { clearTimeout(searchTimer); clearTimeout(usageTimer); queue.stop(); laptop.stop(); runner.shutdown(); notifier.stop(); keys.flush(); };
+  return { cfg, store, runner, push, notifier, events, audit, answerQuestion, files, activity, folderPicker, search, keys, usage, limits, queue, laptop, stop, log };
 }
